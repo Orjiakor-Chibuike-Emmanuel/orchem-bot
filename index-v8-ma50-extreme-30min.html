@@ -870,56 +870,81 @@ async function fetch2HKlines(symbol, sinceTimestamp) {
 }
 
 // ═══════════════════════════════════════
-// 30MIN CONFIRMATION — SIMPLE RULE
+// ═══════════════════════════════════════
+// 30MIN CONFIRMATION — CORRECT BOUNDARY LOGIC
 //
-// Take the 1D SIGNAL CANDLE's own high (bullish) or low (bearish).
-// Watch all 30min candles that opened after that 1D candle closed.
-// Confirmation fires on the FIRST 30min candle whose CLOSE breaks
-// beyond that exact level.
+// Applies the SAME boundary system as the 1D scan but on 30min candles.
+// The 1D signal candle's high/low defines the INITIAL boundary.
+// Subsequent 30min candles that stay inside are auxiliary — their wicks
+// can extend the boundary outward but only a CLOSE outside fires confirmation.
 //
-// Example: 1D Bear Reversal candle has Low = $25.
-// First 30min candle that CLOSES below $25 = confirmed.
+// This prevents spike candles (wick breaks that close back inside) from
+// falsely triggering confirmation — exactly the same rule as 1D.
 // ═══════════════════════════════════════
 function analyse2H(symbol, candles2h, requiredDirection, signalHigh, signalLow) {
   if (!candles2h || candles2h.length < 2) return null;
 
   // Exclude the currently forming (still open) 30min candle
   const closed = candles2h.slice(0, -1);
-  if (!closed.length) return null;
+  if (closed.length < 1) return null;
 
-  const targetLevel = requiredDirection === 'bull' ? signalHigh : signalLow;
-  if (targetLevel === undefined || targetLevel === null) return null;
+  // ── STEP 1: Set initial boundary from the 1D signal candle's high/low ──
+  // This IS the boundary — the 30min candles must break OUTSIDE this
+  let boundaryHigh = signalHigh;
+  let boundaryLow  = signalLow;
+  let parentIdx    = -1; // -1 means the 1D candle itself is the parent
 
-  // Walk through every closed 30min candle in chronological order
-  // and find the FIRST one whose close breaks the target level
+  // ── STEP 2: Walk through 30min candles applying the same boundary rules ──
+  // - If a 30min close breaks outside boundary → new parent, boundary resets
+  // - If a 30min wick exceeds boundary but close stays inside → expand boundary outward
+  // - Confirmation fires on the FIRST close that breaks the boundary
+  //   in the REQUIRED DIRECTION matching the 1D signal
+
   for (let i = 0; i < closed.length; i++) {
     const c = closed[i];
-    const broke = requiredDirection === 'bull'
-      ? c.close > targetLevel
-      : c.close < targetLevel;
 
-    if (broke) {
-      // c.time is the candle's OPEN time. A 30min candle's CLOSE (when confirmation
-      // actually happens) is 30 minutes later. Display the close time, not open time.
-      const closeTime = c.time + (30 * 60 * 1000); // 30 min candle close
-      const dateStr = new Date(closeTime).toLocaleString([], {
-        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
-      });
-      const label = requiredDirection === 'bull'
-        ? `30min Close > 1D High ($${fmt(signalHigh)})`
-        : `30min Close < 1D Low ($${fmt(signalLow)})`;
+    const breaksBull = c.close > boundaryHigh;
+    const breaksBear = c.close < boundaryLow;
 
-      return {
-        direction: requiredDirection,
-        label,
-        closePrice: c.close,
-        dateStr,
-        targetLevel
-      };
+    if (breaksBull || breaksBear) {
+      // This 30min candle's CLOSE broke outside the boundary
+      const direction = breaksBull ? 'bull' : 'bear';
+
+      // Only confirm if it matches the required 1D direction
+      if (direction === requiredDirection) {
+        const closeTime = c.time + (30 * 60 * 1000);
+        const dateStr = new Date(closeTime).toLocaleString([], {
+          day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+        });
+        const auxCount = parentIdx === -1 ? i : i - parentIdx - 1;
+        const label = breaksBull
+          ? `30min Bull Breakout > $${fmt(boundaryHigh)}`
+          : `30min Bear Breakout < $${fmt(boundaryLow)}`;
+
+        return {
+          direction: requiredDirection,
+          label,
+          closePrice: c.close,
+          dateStr,
+          targetLevel: breaksBull ? boundaryHigh : boundaryLow,
+          auxCount
+        };
+      } else {
+        // Broke in the WRONG direction — this becomes new parent, reset boundary
+        parentIdx    = i;
+        boundaryHigh = c.high;
+        boundaryLow  = c.low;
+      }
+
+    } else {
+      // Close stayed inside — auxiliary 30min candle
+      // Expand boundary outward via wicks only (never inward)
+      if (c.high > boundaryHigh) boundaryHigh = c.high;
+      if (c.low  < boundaryLow)  boundaryLow  = c.low;
     }
   }
 
-  return null; // no 30min candle has broken the level yet
+  return null; // no valid 30min confirmation yet
 }
 
 async function run2HConfirmation() {
