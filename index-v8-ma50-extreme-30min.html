@@ -21,7 +21,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
-<title>Orchem Bot v7 — Pattern Scanner</title>
+<title>Orchem Bot v8 (MA50+Extreme+30min) — Pattern Scanner</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
@@ -1395,7 +1395,7 @@ function toggleAuto() {
   } else {
     autoTimer = setInterval(startScan, AUTO_INTERVAL_MS);
     btn.textContent = 'AUTO-SCAN ON (1hr)'; btn.classList.add('active');
-    toast('Auto-scan enabled — runs every 15 minutes', 'neutral');
+    toast('Auto-scan enabled — runs every 1 hour', 'neutral');
     startScan();
   }
 }
