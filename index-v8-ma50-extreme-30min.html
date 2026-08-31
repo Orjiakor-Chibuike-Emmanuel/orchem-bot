@@ -359,10 +359,12 @@ if ('serviceWorker' in navigator) {
 
     <!-- Stats row -->
     <div class="log-stats" id="log-stats">
-      <div class="log-stat"><div class="log-stat-label">Total Trades</div><div class="log-stat-value" id="log-total">0</div></div>
-      <div class="log-stat"><div class="log-stat-label">Wins</div><div class="log-stat-value" style="color:var(--bull)" id="log-wins">0</div></div>
-      <div class="log-stat"><div class="log-stat-label">Losses</div><div class="log-stat-value" style="color:var(--bear)" id="log-losses">0</div></div>
-      <div class="log-stat"><div class="log-stat-label">Win Rate</div><div class="log-stat-value" style="color:var(--warn)" id="log-winrate">—</div></div>
+      <div class="log-stat"><div class="log-stat-label">Total Signals</div><div class="log-stat-value" id="log-total">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">🤖 Bot Wins</div><div class="log-stat-value" style="color:var(--bull)" id="log-auto-wins">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">🤖 Bot Losses</div><div class="log-stat-value" style="color:var(--bear)" id="log-auto-losses">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">🤖 Bot Accuracy</div><div class="log-stat-value" style="color:var(--warn)" id="log-auto-winrate">—</div></div>
+      <div class="log-stat"><div class="log-stat-label">✋ Your Wins</div><div class="log-stat-value" style="color:var(--bull)" id="log-wins">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">✋ Your Rate</div><div class="log-stat-value" style="color:var(--accent)" id="log-winrate">—</div></div>
     </div>
 
     <!-- Action buttons -->
@@ -385,7 +387,8 @@ if ('serviceWorker' in navigator) {
             <th>SL</th>
             <th>TRAILING</th>
             <th>AGE</th>
-            <th>OUTCOME</th>
+            <th>🤖 BOT RESULT</th>
+            <th>✋ YOUR RESULT</th>
             <th>NOTES</th>
           </tr>
         </thead>
@@ -1250,7 +1253,10 @@ async function startScan() {
       }
       run2HConfirmation();
       if (confirmTimer) clearInterval(confirmTimer);
-      confirmTimer = setInterval(run2HConfirmation, AUTO_INTERVAL_MS);
+      confirmTimer = setInterval(() => {
+        run2HConfirmation();
+        runAutoOutcomeChecks(); // check pending trade outcomes every hour
+      }, AUTO_INTERVAL_MS);
 
       // Auto-clear watchlist at the NEXT daily candle close (00:00 UTC),
       // not a fixed 24h timer from whenever the scan happened to run.
@@ -1413,6 +1419,7 @@ function logTrade(item, result2h) {
   const age = item.detectedAt ? getSignalAge(item.detectedAt) : null;
   const entry = {
     id:          Date.now(),
+    loggedAt:    Date.now(), // timestamp for auto outcome check
     date:        new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }),
     symbol:      item.symbol,
     direction:   item.direction,
@@ -1425,13 +1432,82 @@ function logTrade(item, result2h) {
     trailingPct: item.trailingPct,
     signalAge:   age ? `${age.hours}h (${age.label})` : '—',
     confirmTime: result2h.dateStr,
-    outcome:     'pending', // 'win', 'loss', 'skip'
+    autoOutcome: 'open',   // auto-checked: 'win', 'loss', 'open'
+    outcome:     'pending', // manual override: 'win', 'loss', 'skip'
     notes:       ''
   };
   tradeLog.unshift(entry); // newest first
   localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
   renderTradeLog();
   updateLogBadge();
+}
+
+// ── AUTO OUTCOME CHECKER ──
+// 24 hours after a trade is logged, fetch 30min klines and check
+// if price reached TP or SL first. Marks outcome automatically.
+async function checkTradeOutcome(trade) {
+  if (!trade.tpLevel && !trade.slLevel) return; // nothing to check
+  if (trade.autoOutcome && trade.autoOutcome !== 'open') return; // already resolved
+
+  try {
+    // Fetch 30min candles from entry time onwards
+    const since = trade.loggedAt || Date.now() - (24 * 60 * 60 * 1000);
+    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${trade.symbol}&interval=30m&limit=50`);
+    const raw = await safeJson(r);
+    if (!Array.isArray(raw)) return;
+
+    const candles = raw
+      .filter(k => k[0] >= since)
+      .map(k => ({ high: parseFloat(k[2]), low: parseFloat(k[3]) }));
+
+    if (!candles.length) return;
+
+    const isBull = trade.direction === 'bull';
+    let tpHit = false, slHit = false, tpTime = Infinity, slTime = Infinity;
+
+    // Walk through candles in order to find which was hit FIRST
+    for (let i = 0; i < candles.length; i++) {
+      const c = candles[i];
+      if (!tpHit && trade.tpLevel) {
+        if (isBull && c.high >= trade.tpLevel)  { tpHit = true; tpTime = i; }
+        if (!isBull && c.low <= trade.tpLevel)  { tpHit = true; tpTime = i; }
+      }
+      if (!slHit && trade.slLevel) {
+        if (isBull && c.low <= trade.slLevel)   { slHit = true; slTime = i; }
+        if (!isBull && c.high >= trade.slLevel) { slHit = true; slTime = i; }
+      }
+      if (tpHit && slHit) break;
+    }
+
+    // Determine outcome based on which was hit first
+    let autoOutcome = 'open';
+    if (tpHit && slHit) {
+      autoOutcome = tpTime <= slTime ? 'win' : 'loss';
+    } else if (tpHit) {
+      autoOutcome = 'win';
+    } else if (slHit) {
+      autoOutcome = 'loss';
+    }
+
+    trade.autoOutcome = autoOutcome;
+    localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
+    renderTradeLog();
+
+  } catch(e) {
+    console.log('Auto outcome check error:', e);
+  }
+}
+
+// Run auto outcome checks on all pending trades
+async function runAutoOutcomeChecks() {
+  const pending = tradeLog.filter(t =>
+    (!t.autoOutcome || t.autoOutcome === 'open') &&
+    t.loggedAt && (Date.now() - t.loggedAt) >= (2 * 60 * 60 * 1000) // at least 2hrs old
+  );
+  for (const trade of pending) {
+    await checkTradeOutcome(trade);
+    await new Promise(r => setTimeout(r, 200)); // rate limit friendly
+  }
 }
 
 // Set outcome for a trade
@@ -1494,16 +1570,22 @@ function renderTradeLog() {
   const tbody = document.getElementById('log-body');
   if (!tbody) return;
 
-  // Update stats
-  const settled  = tradeLog.filter(t => t.outcome !== 'pending' && t.outcome !== 'skip');
-  const wins     = tradeLog.filter(t => t.outcome === 'win');
-  const losses   = tradeLog.filter(t => t.outcome === 'loss');
-  const winRate  = settled.length ? Math.round(wins.length / settled.length * 100) : null;
+  // Update stats — bot accuracy (automated) + your accuracy (manual)
+  const autoSettled  = tradeLog.filter(t => t.autoOutcome === 'win' || t.autoOutcome === 'loss');
+  const autoWins     = tradeLog.filter(t => t.autoOutcome === 'win');
+  const autoLosses   = tradeLog.filter(t => t.autoOutcome === 'loss');
+  const autoWinRate  = autoSettled.length ? Math.round(autoWins.length / autoSettled.length * 100) : null;
 
-  document.getElementById('log-total').textContent   = tradeLog.length;
-  document.getElementById('log-wins').textContent    = wins.length;
-  document.getElementById('log-losses').textContent  = losses.length;
-  document.getElementById('log-winrate').textContent = winRate !== null ? winRate + '%' : '—';
+  const yourSettled  = tradeLog.filter(t => t.outcome === 'win' || t.outcome === 'loss');
+  const yourWins     = tradeLog.filter(t => t.outcome === 'win');
+  const yourWinRate  = yourSettled.length ? Math.round(yourWins.length / yourSettled.length * 100) : null;
+
+  document.getElementById('log-total').textContent        = tradeLog.length;
+  document.getElementById('log-auto-wins').textContent    = autoWins.length;
+  document.getElementById('log-auto-losses').textContent  = autoLosses.length;
+  document.getElementById('log-auto-winrate').textContent = autoWinRate !== null ? autoWinRate + '%' : '—';
+  document.getElementById('log-wins').textContent         = yourWins.length;
+  document.getElementById('log-winrate').textContent      = yourWinRate !== null ? yourWinRate + '%' : '—';
 
   if (!tradeLog.length) {
     tbody.innerHTML = '<tr><td colspan="11"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>';
@@ -1527,10 +1609,17 @@ function renderTradeLog() {
       <td style="font-family:var(--mono);color:#a78bfa">${t.trailingPct ? t.trailingPct+'%' : '—'}</td>
       <td style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${t.signalAge}</td>
       <td>
+        <span style="font-family:var(--mono);font-size:.76rem;font-weight:700;color:${
+          t.autoOutcome==='win' ? 'var(--bull)' :
+          t.autoOutcome==='loss' ? 'var(--bear)' : 'var(--muted)'}">
+          ${t.autoOutcome==='win' ? '✅ WIN' : t.autoOutcome==='loss' ? '❌ LOSS' : '⏳ OPEN'}
+        </span>
+      </td>
+      <td>
         <div style="display:flex;gap:4px;">
-          <button class="outcome-btn ${t.outcome==='win'?'win':''}" onclick="setOutcome(${t.id},'win')">✅ Win</button>
-          <button class="outcome-btn ${t.outcome==='loss'?'loss':''}" onclick="setOutcome(${t.id},'loss')">❌ Loss</button>
-          <button class="outcome-btn ${t.outcome==='skip'?'skip':''}" onclick="setOutcome(${t.id},'skip')">⏭ Skip</button>
+          <button class="outcome-btn ${t.outcome==='win'?'win':''}" onclick="setOutcome(${t.id},'win')">✅</button>
+          <button class="outcome-btn ${t.outcome==='loss'?'loss':''}" onclick="setOutcome(${t.id},'loss')">❌</button>
+          <button class="outcome-btn ${t.outcome==='skip'?'skip':''}" onclick="setOutcome(${t.id},'skip')">⏭</button>
         </div>
       </td>
       <td><input type="text" value="${t.notes||''}" placeholder="Add note..." 
@@ -1802,6 +1891,8 @@ function setStatus(text, live) {
 window.addEventListener('load', () => {
   updateLogBadge();
   renderTradeLog();
+  // Check any pending trade outcomes on load
+  setTimeout(runAutoOutcomeChecks, 3000);
 });
 
 function showProgress(on) {
