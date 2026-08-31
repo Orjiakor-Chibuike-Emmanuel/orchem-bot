@@ -196,6 +196,36 @@ if ('serviceWorker' in navigator) {
 
   #last-scan { font-family: var(--mono); font-size: .66rem; color: var(--muted); }
 
+  /* ── TRADE LOG ── */
+  .log-table { width: 100%; border-collapse: collapse; font-size: .78rem; margin-top: 12px; }
+  .log-table th {
+    text-align: left; font-family: var(--mono); font-size: .62rem;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--muted);
+    padding: 8px 10px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; cursor: pointer;
+  }
+  .log-table th:hover { color: var(--accent); }
+  .log-table td { padding: 9px 10px; border-bottom: 1px solid rgba(28,35,48,.5); vertical-align: middle; white-space: nowrap; }
+  .log-table tr:hover td { background: rgba(0,229,255,.025); }
+  .outcome-btn {
+    font-family: var(--mono); font-size: .68rem; padding: 3px 10px;
+    border-radius: 4px; cursor: pointer; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); transition: all .15s;
+  }
+  .outcome-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .outcome-btn.win  { background: rgba(0,200,150,.12); color: var(--bull); border-color: rgba(0,200,150,.3); }
+  .outcome-btn.loss { background: rgba(255,69,96,.12);  color: var(--bear); border-color: rgba(255,69,96,.3); }
+  .outcome-btn.skip { background: rgba(240,165,0,.1);   color: var(--warn); border-color: rgba(240,165,0,.25); }
+  .log-stats { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 0 0; }
+  .log-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; min-width: 100px; flex: 1; }
+  .log-stat-label { font-size: .64rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 4px; }
+  .log-stat-value { font-family: var(--mono); font-size: 1.2rem; color: var(--bright); font-weight: 700; }
+  .export-btn { font-family: var(--mono); font-size: .74rem; padding: 8px 16px; border-radius: 6px; cursor: pointer; background: var(--surface); color: var(--accent); border: 1px solid var(--accent); transition: all .15s; margin-left: auto; }
+  .export-btn:hover { background: var(--accent); color: #000; }
+  .clear-btn { font-family: var(--mono); font-size: .74rem; padding: 8px 16px; border-radius: 6px; cursor: pointer; background: transparent; color: var(--muted); border: 1px solid var(--border); transition: all .15s; }
+  .clear-btn:hover { border-color: var(--bear); color: var(--bear); }
+  .no-log { text-align: center; padding: 60px 20px; color: var(--muted); font-family: var(--mono); font-size: .8rem; }
+
   /* ── 30MIN CONFIRMATION TAB ── */
   .confirm-card {
     background: var(--surface); border: 1px solid var(--border);
@@ -296,6 +326,7 @@ if ('serviceWorker' in navigator) {
     <button class="tab active" onclick="switchTab('engulf', this)">ENGULFING CANDLES</button>
     <button class="tab" onclick="switchTab('aux', this)">AUXILIARY BREAKOUTS</button>
     <button class="tab" onclick="switchTab('confirm', this)">30MIN CONFIRMATION <span id="confirm-badge" style="background:var(--bull);color:#000;border-radius:10px;padding:1px 7px;font-size:.65rem;margin-left:4px;display:none">0</span></button>
+    <button class="tab" onclick="switchTab('tradelog', this)">TRADE LOG <span id="log-badge" style="background:var(--muted);color:#fff;border-radius:10px;padding:1px 7px;font-size:.65rem;margin-left:4px">0</span></button>
   </div>
 
   <div class="filters" id="filters-engulf">
@@ -319,6 +350,49 @@ if ('serviceWorker' in navigator) {
     <div class="section-title">30MIN ENTRY CONFIRMATION WATCH</div>
     <div class="confirm-grid" id="confirm-grid">
       <div class="no-watch">📡 Run a 1D scan first — flagged pairs will appear here for 30min confirmation</div>
+    </div>
+  </div>
+
+  <!-- TRADE LOG PANEL -->
+  <div id="tradelog-panel" style="display:none; padding: 16px 0 40px;">
+    <div class="section-title">TRADE LOG</div>
+
+    <!-- Stats row -->
+    <div class="log-stats" id="log-stats">
+      <div class="log-stat"><div class="log-stat-label">Total Trades</div><div class="log-stat-value" id="log-total">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">Wins</div><div class="log-stat-value" style="color:var(--bull)" id="log-wins">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">Losses</div><div class="log-stat-value" style="color:var(--bear)" id="log-losses">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">Win Rate</div><div class="log-stat-value" style="color:var(--warn)" id="log-winrate">—</div></div>
+    </div>
+
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;padding:14px 0 0;align-items:center;">
+      <button class="clear-btn" onclick="clearLog()">🗑 Clear Log</button>
+      <button class="export-btn" onclick="exportLog()">⬇ Export CSV</button>
+    </div>
+
+    <!-- Table -->
+    <div style="overflow-x:auto;margin-top:12px;">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>DATE</th>
+            <th>SYMBOL</th>
+            <th>DIRECTION</th>
+            <th>SIGNAL TYPE</th>
+            <th>ENTRY</th>
+            <th>TP</th>
+            <th>SL</th>
+            <th>TRAILING</th>
+            <th>AGE</th>
+            <th>OUTCOME</th>
+            <th>NOTES</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr><td colspan="11"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -387,6 +461,10 @@ const VOL_MULTIPLIER     = 1.2;  // breakout candle must be 1.2x average volume
 const EXTREME_NEAR_PCT   = 5;    // skip if within 5% of 50-day high/low
 const EXTREME_MOVE_PCT   = 70;   // skip bearish if already 70%+ below 50-day high (or bull if 70%+ above 50-day low)
 
+// ── TELEGRAM ALERTS ──
+const TG_TOKEN   = '8710884236:AAGUUyZ19S6EpT_1Sf9oe8trEtdelD2CvhM';
+const TG_CHAT_ID = '1742837981';
+
 /* ═══════════════════════════════════════
    STATE
 ═══════════════════════════════════════ */
@@ -394,6 +472,7 @@ let engulfResults  = [];
 let auxResults     = [];
 let watchlist      = []; // pairs flagged by 1D scan, being watched on 30min
 let confirmResults = []; // 30min confirmation results
+let tradeLog       = JSON.parse(localStorage.getItem('orchem_trade_log') || '[]'); // persists across sessions
 let activeTab      = 'engulf';
 let activeFilter   = 'all';
 let activeFilterAux= 'all';
@@ -720,6 +799,34 @@ function getSignalAge(signalTimestamp) {
   return { hours: hours.toFixed(1), color, label };
 }
 
+// ── TRAILING STOP SUGGESTION ──
+// Calculate suggested trailing stop % based on average 30min candle range
+// of the specific pair. Trailing should be wide enough to survive normal
+// candle swings but tight enough to lock in meaningful profit.
+// Rule: suggested trailing = 1.5x the average 30min candle range %
+async function calcSuggestedTrailing(symbol) {
+  try {
+    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=20`);
+    const raw = await safeJson(r);
+    if (!Array.isArray(raw) || raw.length < 5) return null;
+
+    // Calculate average candle range % over last 20 candles
+    const ranges = raw.map(k => {
+      const high  = parseFloat(k[2]);
+      const low   = parseFloat(k[3]);
+      const close = parseFloat(k[4]);
+      return ((high - low) / close) * 100;
+    });
+    const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+
+    // Suggested trailing = 1.5x average range, rounded to 1 decimal
+    const suggested = Math.max(0.5, (avgRange * 1.5)).toFixed(1);
+    return parseFloat(suggested);
+  } catch(_) {
+    return null;
+  }
+}
+
 /* ═══════════════════════════════════════
    ANALYSE ONE SYMBOL
 ═══════════════════════════════════════ */
@@ -973,13 +1080,65 @@ async function run2HConfirmation() {
       // Fire alert if newly confirmed
       if (result2h && !item.alerted) {
         item.alerted = true;
-        const dir = result2h.direction === 'bull' ? '▲ LONG' : '▼ SHORT';
+        const dir      = result2h.direction === 'bull' ? '▲ LONG' : '▼ SHORT';
+        const dirEmoji = result2h.direction === 'bull' ? '🟢' : '🔴';
+
+        // ── RECALCULATE TP/SL FROM ACTUAL 30MIN ENTRY PRICE ──
+        // The entry price is result2h.closePrice (the 30min candle that confirmed)
+        // NOT the 1D candle close — this is what the trader actually enters at
+        const entryPrice = result2h.closePrice;
+
+        // Fetch fresh 1D klines to get current S/R levels
+        let confirmTpLevel = null, confirmTpGain = null;
+        let confirmSlLevel = null, confirmSlRisk = null;
+        try {
+          const freshKlines = await fetchKlines(item.symbol);
+          if (freshKlines && freshKlines.length > 5) {
+            const freshClosed = freshKlines.slice(0, -1);
+            const freshLevels = findSwingLevels(freshClosed);
+            const tpLvl = findTPLevel(entryPrice, freshLevels, item.direction);
+            const slLvl = findSLLevel(entryPrice, freshLevels, item.direction);
+            if (tpLvl) {
+              confirmTpLevel = tpLvl.price;
+              confirmTpGain  = calcRR(entryPrice, tpLvl.price);
+            }
+            if (slLvl) {
+              confirmSlLevel = slLvl.price;
+              confirmSlRisk  = calcRR(entryPrice, slLvl.price);
+            }
+          }
+        } catch(_) {}
+
+        // Update item with recalculated levels from actual entry price
+        item.tpLevel = confirmTpLevel || item.tpLevel;
+        item.tpGain  = confirmTpGain  || item.tpGain;
+        item.slLevel = confirmSlLevel || item.slLevel;
+        item.slRisk  = confirmSlRisk  || item.slRisk;
+
+        // ── AUTO-LOG THE TRADE ──
+        logTrade(item, result2h);
+
+        // In-app toast
         toast(`<span class="toast-sym">✅ ${item.symbol}</span><div class="toast-body">30min Confirmed! ${result2h.label} · ${dir}</div>`, result2h.direction);
+
+        // Browser notification (if permitted)
         if (notifGranted) {
           new Notification(`✅ Entry Confirmed: ${item.symbol}`, {
             body: `${result2h.label} on 30min · ${dir} · from ${item.signal1d}`
           });
         }
+
+        // ── TELEGRAM ALERT (with correct entry-based TP/SL) ──
+        const tpText       = item.tpLevel     ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)` : '';
+        const slText       = item.slLevel     ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)` : '';
+        const trailingText = item.trailingPct ? `\n📌 Trailing Stop: ${item.trailingPct}% (set on Bybit)` : '';
+        const tgMsg = `${dirEmoji} <b>ENTRY CONFIRMED</b>\n`
+          + `<b>${item.symbol.replace('USDT', '')}/USDT</b> · ${dir}\n`
+          + `Signal: ${item.signal1d}\n`
+          + `Confirmation: ${result2h.label}\n`
+          + `Entry: $${fmt(entryPrice)} · ${result2h.dateStr}`
+          + tpText + slText + trailingText;
+        sendTelegram(tgMsg);
       }
     } catch(_) {
       confirmResults.push({ ...item, confirmed: false, signal2h: null });
@@ -1051,17 +1210,27 @@ async function startScan() {
     todayUTC.setUTCHours(0, 0, 0, 0);
     const dailyOpenTimestamp = todayUTC.getTime();
 
+    // Calculate trailing stop suggestions for all signals
+    const trailingMap = {};
+    await Promise.all(allSignals.map(async r => {
+      trailingMap[r.symbol] = await calcSuggestedTrailing(r.symbol);
+      await sleep(50);
+    }));
+
     watchlist = allSignals.map(r => ({
       symbol:          r.symbol,
       direction:       r.direction,
       signal1d:        r.label || r.signal,
       signalTimestamp: dailyOpenTimestamp,
-      signalHigh:      r.signalHigh != null ? r.signalHigh : null, // 1D signal candle's own high
-      signalLow:       r.signalLow  != null ? r.signalLow  : null, // 1D signal candle's own low
+      signalHigh:      r.signalHigh != null ? r.signalHigh : null,
+      signalLow:       r.signalLow  != null ? r.signalLow  : null,
+      // TP/SL stored from 1D for initial display only
+      // They will be RECALCULATED from actual 30min entry price at confirmation
       tpLevel:         r.tpLevel || null,
       tpGain:          r.tpGain  || null,
       slLevel:         r.slLevel || null,
       slRisk:          r.slRisk  || null,
+      trailingPct:     trailingMap[r.symbol] || null,
       entryPrice:      r.price   || r.closePrice || null,
       detectedAt:      Date.now(),
       alerted:         false
@@ -1235,10 +1404,148 @@ function fmt(p) {
     : p.toPrecision(4);
 }
 
+/* ═══════════════════════════════════════
+   TRADE LOG FUNCTIONS
+═══════════════════════════════════════ */
+
+// Add a confirmed trade to the log automatically
+function logTrade(item, result2h) {
+  const age = item.detectedAt ? getSignalAge(item.detectedAt) : null;
+  const entry = {
+    id:          Date.now(),
+    date:        new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }),
+    symbol:      item.symbol,
+    direction:   item.direction,
+    signal1d:    item.signal1d || '—',
+    entryPrice:  result2h.closePrice,
+    tpLevel:     item.tpLevel,
+    tpGain:      item.tpGain,
+    slLevel:     item.slLevel,
+    slRisk:      item.slRisk,
+    trailingPct: item.trailingPct,
+    signalAge:   age ? `${age.hours}h (${age.label})` : '—',
+    confirmTime: result2h.dateStr,
+    outcome:     'pending', // 'win', 'loss', 'skip'
+    notes:       ''
+  };
+  tradeLog.unshift(entry); // newest first
+  localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
+  renderTradeLog();
+  updateLogBadge();
+}
+
+// Set outcome for a trade
+function setOutcome(id, outcome) {
+  const trade = tradeLog.find(t => t.id === id);
+  if (!trade) return;
+  trade.outcome = trade.outcome === outcome ? 'pending' : outcome; // toggle
+  localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
+  renderTradeLog();
+}
+
+// Save notes for a trade
+function saveNote(id, note) {
+  const trade = tradeLog.find(t => t.id === id);
+  if (!trade) return;
+  trade.notes = note;
+  localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
+}
+
+// Clear all logs
+function clearLog() {
+  if (!confirm('Clear all trade history? This cannot be undone.')) return;
+  tradeLog = [];
+  localStorage.removeItem('orchem_trade_log');
+  renderTradeLog();
+  updateLogBadge();
+}
+
+// Export to CSV
+function exportLog() {
+  if (!tradeLog.length) { toast('No trades to export', 'neutral'); return; }
+  const headers = ['Date','Symbol','Direction','Signal','Entry Price','TP Level','TP %','SL Level','SL %','Trailing %','Signal Age','Confirm Time','Outcome','Notes'];
+  const rows = tradeLog.map(t => [
+    t.date, t.symbol, t.direction === 'bull' ? 'LONG' : 'SHORT',
+    t.signal1d, t.entryPrice, t.tpLevel || '', t.tpGain || '',
+    t.slLevel || '', t.slRisk || '', t.trailingPct || '',
+    t.signalAge, t.confirmTime, t.outcome, `"${(t.notes||'').replace(/"/g,'""')}"`
+  ]);
+  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `orchem-trade-log-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Update log badge count
+function updateLogBadge() {
+  const badge = document.getElementById('log-badge');
+  if (badge) {
+    badge.textContent = tradeLog.length;
+    badge.style.background = tradeLog.length ? 'var(--accent)' : 'var(--muted)';
+  }
+}
+
+// Render trade log table
+function renderTradeLog() {
+  const tbody = document.getElementById('log-body');
+  if (!tbody) return;
+
+  // Update stats
+  const settled  = tradeLog.filter(t => t.outcome !== 'pending' && t.outcome !== 'skip');
+  const wins     = tradeLog.filter(t => t.outcome === 'win');
+  const losses   = tradeLog.filter(t => t.outcome === 'loss');
+  const winRate  = settled.length ? Math.round(wins.length / settled.length * 100) : null;
+
+  document.getElementById('log-total').textContent   = tradeLog.length;
+  document.getElementById('log-wins').textContent    = wins.length;
+  document.getElementById('log-losses').textContent  = losses.length;
+  document.getElementById('log-winrate').textContent = winRate !== null ? winRate + '%' : '—';
+
+  if (!tradeLog.length) {
+    tbody.innerHTML = '<tr><td colspan="11"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = tradeLog.map(t => {
+    const isBull   = t.direction === 'bull';
+    const dirColor = isBull ? 'var(--bull)' : 'var(--bear)';
+    const dirLabel = isBull ? '▲ LONG' : '▼ SHORT';
+    const outcomeClass = t.outcome === 'win' ? 'win' : t.outcome === 'loss' ? 'loss' : t.outcome === 'skip' ? 'skip' : '';
+
+    return `<tr>
+      <td style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${t.date}</td>
+      <td style="font-family:var(--mono);font-weight:700;color:var(--bright)">${t.symbol.replace('USDT','')}/USDT</td>
+      <td style="font-family:var(--mono);font-weight:700;color:${dirColor};font-size:.76rem">${dirLabel}</td>
+      <td style="font-size:.74rem;color:var(--text)">${t.signal1d}</td>
+      <td style="font-family:var(--mono)">$${fmt(t.entryPrice)}</td>
+      <td style="font-family:var(--mono);color:var(--warn)">${t.tpLevel ? '$'+fmt(t.tpLevel)+' (+'+t.tpGain+'%)' : '—'}</td>
+      <td style="font-family:var(--mono);color:var(--bear)">${t.slLevel ? '$'+fmt(t.slLevel)+' (-'+t.slRisk+'%)' : '—'}</td>
+      <td style="font-family:var(--mono);color:#a78bfa">${t.trailingPct ? t.trailingPct+'%' : '—'}</td>
+      <td style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${t.signalAge}</td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          <button class="outcome-btn ${t.outcome==='win'?'win':''}" onclick="setOutcome(${t.id},'win')">✅ Win</button>
+          <button class="outcome-btn ${t.outcome==='loss'?'loss':''}" onclick="setOutcome(${t.id},'loss')">❌ Loss</button>
+          <button class="outcome-btn ${t.outcome==='skip'?'skip':''}" onclick="setOutcome(${t.id},'skip')">⏭ Skip</button>
+        </div>
+      </td>
+      <td><input type="text" value="${t.notes||''}" placeholder="Add note..." 
+          onchange="saveNote(${t.id},this.value)"
+          style="background:transparent;border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:.74rem;width:140px;outline:none;">
+      </td>
+    </tr>`;
+  }).join('');
+}
+
 function renderActive() {
   if (activeTab === 'engulf') renderEngulf();
   else if (activeTab === 'aux') renderAux();
-  else renderConfirm();
+  else if (activeTab === 'confirm') renderConfirm();
+  else if (activeTab === 'tradelog') renderTradeLog();
 }
 
 /* ═══════════════════════════════════════
@@ -1296,6 +1603,7 @@ function renderConfirm() {
              🎯 <span style="color:var(--warn);font-family:var(--mono);font-weight:700">TP Target: $${fmt(r.tpLevel)}</span>
              <span style="color:var(--muted);font-size:.7rem"> (+${r.tpGain}% potential)</span>
              ${r.slLevel ? `<br>🛑 <span style="color:var(--bear);font-family:var(--mono);font-weight:700">Stop Loss: $${fmt(r.slLevel)}</span><span style="color:var(--muted);font-size:.7rem"> (-${r.slRisk}% risk)</span>` : ''}
+             ${r.trailingPct ? `<br>📌 <span style="color:#a78bfa;font-family:var(--mono);font-weight:700">Trailing Stop: ${r.trailingPct}%</span><span style="color:var(--muted);font-size:.7rem"> (set on Bybit after entry)</span>` : ''}
            </div>`
       : '';
 
@@ -1352,8 +1660,10 @@ function switchTab(tab, el) {
   document.getElementById('filters-aux').style.display    = tab==='aux'     ? 'flex' : 'none';
   document.getElementById('thead-engulf').style.display   = tab==='engulf'  ? ''     : 'none';
   document.getElementById('thead-aux').style.display      = tab==='aux'     ? ''     : 'none';
-  document.getElementById('confirm-panel').style.display  = tab==='confirm' ? 'block': 'none';
-  document.querySelector('.results-section').style.display= tab==='confirm' ? 'none' : 'block';
+  document.getElementById('confirm-panel').style.display    = tab==='confirm'   ? 'block': 'none';
+  document.getElementById('tradelog-panel').style.display   = tab==='tradelog'  ? 'block': 'none';
+  document.querySelector('.results-section').style.display  = (tab==='confirm' || tab==='tradelog') ? 'none' : 'block';
+  if (tab === 'tradelog') renderTradeLog();
   document.getElementById('section-label').textContent    =
     tab==='engulf' ? 'ENGULFING SETUPS' : tab==='aux' ? 'AUXILIARY BREAKOUTS' : '';
   renderActive();
@@ -1437,6 +1747,23 @@ function notifyNew() {
       icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><text y="26" font-size="28">📡</text></svg>'
     });
   }
+
+  // ── TELEGRAM: Send 1D scan summary ──
+  const engulfBull = engulfResults.filter(r=>r.direction==='bull');
+  const engulfBear = engulfResults.filter(r=>r.direction==='bear');
+  const auxBull    = auxResults.filter(r=>r.direction==='bull');
+  const auxBear    = auxResults.filter(r=>r.direction==='bear');
+
+  if (allNew.length > 0) {
+    let tgSummary = `📡 <b>ORCHEM BOT — 1D SCAN COMPLETE</b>\n`
+      + `${allNew.length} setups found\n\n`
+      + `🟢 Bull Engulfing: ${engulfBull.length}\n`
+      + `🔴 Bear Engulfing: ${engulfBear.length}\n`
+      + `🟢 Aux Bull Breakout: ${auxBull.length}\n`
+      + `🔴 Aux Bear Breakout: ${auxBear.length}\n\n`
+      + `⏳ Watching for 30min confirmations...`;
+    sendTelegram(tgSummary);
+  }
 }
 
 function toast(html, type='neutral') {
@@ -1448,10 +1775,34 @@ function toast(html, type='neutral') {
   setTimeout(() => el.remove(), 5500);
 }
 
+// ── TELEGRAM NOTIFICATION ──
+async function sendTelegram(message) {
+  try {
+    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TG_CHAT_ID,
+        text: message,
+        parse_mode: 'HTML'
+      })
+    });
+  } catch(e) {
+    console.log('Telegram error:', e);
+  }
+}
+
 function setStatus(text, live) {
   document.getElementById('status-text').textContent = text;
   document.getElementById('status-dot').className = 'dot' + (live ? ' live' : '');
 }
+
+// Initialize on page load
+window.addEventListener('load', () => {
+  updateLogBadge();
+  renderTradeLog();
+});
 
 function showProgress(on) {
   document.getElementById('progress-wrap').classList.toggle('visible', on);
