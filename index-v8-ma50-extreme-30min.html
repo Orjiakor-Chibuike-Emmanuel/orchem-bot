@@ -751,15 +751,16 @@ function isLowLiquidityHour() {
 
 function findTPLevel(price, levels, direction) {
   if (direction === 'bull') {
-    // Find closest resistance above current price
+    // TP must be STRICTLY above entry — filter ALL levels above price regardless of type
+    // (sometimes swing highs are labeled as support, so check all levels)
     const above = levels
-      .filter(l => l.type === 'resistance' && l.price > price * 1.005) // at least 0.5% above
+      .filter(l => l.price > price * 1.005) // at least 0.5% above entry — hard check
       .sort((a, b) => a.price - b.price); // closest first
     return above[0] || null;
   } else {
-    // Find closest support below current price
+    // TP must be STRICTLY below entry
     const below = levels
-      .filter(l => l.type === 'support' && l.price < price * 0.995) // at least 0.5% below
+      .filter(l => l.price < price * 0.995) // at least 0.5% below entry — hard check
       .sort((a, b) => b.price - a.price); // closest first
     return below[0] || null;
   }
@@ -1113,10 +1114,19 @@ async function run2HConfirmation() {
         } catch(_) {}
 
         // Update item with recalculated levels from actual entry price
-        item.tpLevel = confirmTpLevel || item.tpLevel;
-        item.tpGain  = confirmTpGain  || item.tpGain;
-        item.slLevel = confirmSlLevel || item.slLevel;
-        item.slRisk  = confirmSlRisk  || item.slRisk;
+        // Safety check: TP must be above entry for longs, below for shorts
+        const tpValid = confirmTpLevel && (
+          (item.direction === 'bull' && confirmTpLevel > entryPrice) ||
+          (item.direction === 'bear' && confirmTpLevel < entryPrice)
+        );
+        const slValid = confirmSlLevel && (
+          (item.direction === 'bull' && confirmSlLevel < entryPrice) ||
+          (item.direction === 'bear' && confirmSlLevel > entryPrice)
+        );
+        item.tpLevel = tpValid ? confirmTpLevel : null;
+        item.tpGain  = tpValid ? confirmTpGain  : null;
+        item.slLevel = slValid ? confirmSlLevel : null;
+        item.slRisk  = slValid ? confirmSlRisk  : null;
 
         // ── AUTO-LOG THE TRADE ──
         logTrade(item, result2h);
@@ -1661,7 +1671,12 @@ function renderConfirm() {
 
     // Check if TP already reached
     const currentPrice = r.signal2h ? r.signal2h.closePrice : r.entryPrice;
-    const tpReached = r.tpLevel && currentPrice && (
+    // tpReached: only valid if TP is in the correct direction from entry
+    const tpDirectionValid = r.tpLevel && r.entryPrice && (
+      (isBull && r.tpLevel > r.entryPrice) ||
+      (!isBull && r.tpLevel < r.entryPrice)
+    );
+    const tpReached = tpDirectionValid && currentPrice && (
       (isBull && currentPrice >= r.tpLevel) ||
       (!isBull && currentPrice <= r.tpLevel)
     );
