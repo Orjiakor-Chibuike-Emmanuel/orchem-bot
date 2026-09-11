@@ -1,1 +1,1950 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/orchem-bot/service-worker.js', { scope: '/orchem-bot/' })
+      .then(reg => {
+        console.log('Orchem Bot SW registered');
+        navigator.serviceWorker.addEventListener('message', e => {
+          if (e.data && e.data.type === 'CONFIRMATIONS_FOUND') {
+            e.data.confirmed.forEach(c => {
+              toast('<span class="toast-sym">✅ ' + c.symbol + '</span><div class="toast-body">' + c.signal1d + ' · ' + c.result.label + '</div>', c.direction);
+            });
+          }
+        });
+      })
+      .catch(err => console.log('SW failed:', err));
+  });
+}
+</script>
+<title>Orchem Bot v8 (MA50+Extreme+30min) — Pattern Scanner</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+  :root {
+    --bg:      #080b10;
+    --surface: #0d1117;
+    --border:  #1c2330;
+    --muted:   #3a4455;
+    --text:    #c9d1d9;
+    --bright:  #e6edf3;
+    --accent:  #00e5ff;
+    --bull:    #00c896;
+    --bear:    #ff4560;
+    --warn:    #f0a500;
+    --mono:    'Space Mono', monospace;
+    --sans:    'Space Grotesk', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background:
+      repeating-linear-gradient(0deg, transparent, transparent 39px, var(--border) 39px, var(--border) 40px),
+      repeating-linear-gradient(90deg, transparent, transparent 39px, var(--border) 39px, var(--border) 40px);
+    opacity: .18; pointer-events: none; z-index: 0;
+  }
+
+  .scan-line {
+    position: fixed; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: .35; animation: scanDown 4s linear infinite; z-index: 1; pointer-events: none;
+  }
+  @keyframes scanDown { from { top: 0; } to { top: 100vh; } }
+
+  .wrap { position: relative; z-index: 2; max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+
+  header {
+    border-bottom: 1px solid var(--border); padding: 16px 0;
+    backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 50;
+    background: rgba(8,11,16,.88);
+  }
+  .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .logo { font-family: var(--mono); font-size: 1.05rem; color: var(--bright); letter-spacing: .06em; }
+  .logo span { color: var(--accent); }
+
+  .status-pill {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: .7rem; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 14px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); transition: background .3s; }
+  .dot.live { background: var(--bull); box-shadow: 0 0 6px var(--bull); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 50% { opacity: .4; } }
+
+  .controls { padding: 18px 0 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+  .btn {
+    font-family: var(--mono); font-size: .76rem;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 9px 18px; cursor: pointer; transition: all .18s; letter-spacing: .04em;
+  }
+  .btn-primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+  .btn-primary:hover { background: #33eaff; }
+  .btn-primary:disabled { background: var(--muted); border-color: var(--muted); color: #000; cursor: not-allowed; }
+  .btn-ghost { background: transparent; color: var(--text); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-ghost.active { border-color: var(--accent); color: var(--accent); }
+  .notif-btn { margin-left: auto; background: var(--surface); color: var(--warn); border-color: var(--warn); font-family: var(--mono); font-size: .74rem; }
+  .notif-btn:hover { background: var(--warn); color: #000; }
+
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; padding: 16px 0 0; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; min-width: 110px; flex: 1; }
+  .stat-label { font-size: .65rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 5px; }
+  .stat-value { font-family: var(--mono); font-size: 1.3rem; color: var(--bright); font-weight: 700; }
+  .stat-value.bull { color: var(--bull); }
+  .stat-value.bear { color: var(--bear); }
+  .stat-value.warn { color: var(--warn); }
+
+  .progress-wrap { display: none; padding: 14px 0 0; }
+  .progress-wrap.visible { display: block; }
+  .progress-bar-bg { height: 3px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width .25s; border-radius: 3px; }
+  .progress-label { font-family: var(--mono); font-size: .68rem; color: var(--muted); margin-top: 6px; }
+
+  /* TABS */
+  .tabs { display: flex; gap: 0; padding: 18px 0 0; border-bottom: 1px solid var(--border); }
+  .tab {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .08em;
+    padding: 8px 20px; cursor: pointer; border: none; background: transparent;
+    color: var(--muted); border-bottom: 2px solid transparent; transition: all .15s;
+    text-transform: uppercase;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 0 0; }
+  .filter-btn {
+    font-size: .7rem; padding: 5px 13px; border-radius: 4px;
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    cursor: pointer; font-family: var(--mono); transition: all .15s;
+  }
+  .filter-btn:hover, .filter-btn.active { border-color: var(--accent); color: var(--accent); }
+  .filter-btn.bull-f.active { border-color: var(--bull); color: var(--bull); }
+  .filter-btn.bear-f.active { border-color: var(--bear); color: var(--bear); }
+  .filter-btn.brk-f.active  { border-color: var(--warn); color: var(--warn); }
+
+  .results-section { padding: 16px 0 40px; }
+  .section-title {
+    font-family: var(--mono); font-size: .68rem; text-transform: uppercase;
+    letter-spacing: .12em; color: var(--muted); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  th {
+    text-align: left; font-family: var(--mono); font-size: .62rem;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--muted);
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; cursor: pointer; user-select: none;
+  }
+  th:hover { color: var(--accent); }
+  td { padding: 10px 12px; border-bottom: 1px solid rgba(28,35,48,.5); vertical-align: middle; white-space: nowrap; }
+  tr:hover td { background: rgba(0,229,255,.025); }
+
+  .symbol-cell { font-family: var(--mono); font-weight: 700; color: var(--bright); font-size: .86rem; }
+  .price-cell  { font-family: var(--mono); font-size: .8rem; }
+
+  .pattern-badge {
+    display: inline-block; font-family: var(--mono); font-size: .66rem;
+    padding: 3px 9px; border-radius: 4px; font-weight: 700; letter-spacing: .04em;
+  }
+  .badge-bull     { background: rgba(0,200,150,.1);  color: var(--bull); border: 1px solid rgba(0,200,150,.28); }
+  .badge-bear     { background: rgba(255,69,96,.1);  color: var(--bear); border: 1px solid rgba(255,69,96,.28); }
+  .badge-bull-brk { background: rgba(0,200,150,.08); color: var(--bull); border: 1px solid rgba(0,200,150,.2); }
+  .badge-bear-brk { background: rgba(255,69,96,.08); color: var(--bear); border: 1px solid rgba(255,69,96,.2); }
+  .badge-aux      { background: rgba(240,165,0,.1);  color: var(--warn); border: 1px solid rgba(240,165,0,.28); }
+
+  .signal-bar { height: 5px; border-radius: 3px; background: var(--border); width: 64px; display: inline-block; vertical-align: middle; overflow: hidden; }
+  .signal-fill { height: 100%; border-radius: 3px; }
+
+  .empty-state { text-align: center; padding: 70px 20px; color: var(--muted); }
+  .empty-icon  { font-size: 2.4rem; margin-bottom: 14px; }
+  .empty-title { font-family: var(--mono); font-size: .88rem; color: var(--text); margin-bottom: 6px; }
+  .empty-sub   { font-size: .78rem; }
+
+  #toast-container { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 9999; }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 8px;
+    padding: 11px 16px; font-size: .78rem; max-width: 300px;
+    animation: slideIn .22s ease; font-family: var(--sans);
+  }
+  .toast.bull { border-left-color: var(--bull); }
+  .toast.bear { border-left-color: var(--bear); }
+  .toast.warn { border-left-color: var(--warn); }
+  .toast-sym  { font-family: var(--mono); font-weight: 700; color: var(--bright); }
+  .toast-body { color: var(--text); margin-top: 2px; font-size: .73rem; }
+  @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+  #last-scan { font-family: var(--mono); font-size: .66rem; color: var(--muted); }
+
+  /* ── TRADE LOG ── */
+  .log-table { width: 100%; border-collapse: collapse; font-size: .78rem; margin-top: 12px; }
+  .log-table th {
+    text-align: left; font-family: var(--mono); font-size: .62rem;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--muted);
+    padding: 8px 10px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; cursor: pointer;
+  }
+  .log-table th:hover { color: var(--accent); }
+  .log-table td { padding: 9px 10px; border-bottom: 1px solid rgba(28,35,48,.5); vertical-align: middle; white-space: nowrap; }
+  .log-table tr:hover td { background: rgba(0,229,255,.025); }
+  .outcome-btn {
+    font-family: var(--mono); font-size: .68rem; padding: 3px 10px;
+    border-radius: 4px; cursor: pointer; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); transition: all .15s;
+  }
+  .outcome-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .outcome-btn.win  { background: rgba(0,200,150,.12); color: var(--bull); border-color: rgba(0,200,150,.3); }
+  .outcome-btn.loss { background: rgba(255,69,96,.12);  color: var(--bear); border-color: rgba(255,69,96,.3); }
+  .outcome-btn.skip { background: rgba(240,165,0,.1);   color: var(--warn); border-color: rgba(240,165,0,.25); }
+  .log-stats { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 0 0; }
+  .log-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; min-width: 100px; flex: 1; }
+  .log-stat-label { font-size: .64rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 4px; }
+  .log-stat-value { font-family: var(--mono); font-size: 1.2rem; color: var(--bright); font-weight: 700; }
+  .export-btn { font-family: var(--mono); font-size: .74rem; padding: 8px 16px; border-radius: 6px; cursor: pointer; background: var(--surface); color: var(--accent); border: 1px solid var(--accent); transition: all .15s; margin-left: auto; }
+  .export-btn:hover { background: var(--accent); color: #000; }
+  .clear-btn { font-family: var(--mono); font-size: .74rem; padding: 8px 16px; border-radius: 6px; cursor: pointer; background: transparent; color: var(--muted); border: 1px solid var(--border); transition: all .15s; }
+  .clear-btn:hover { border-color: var(--bear); color: var(--bear); }
+  .no-log { text-align: center; padding: 60px 20px; color: var(--muted); font-family: var(--mono); font-size: .8rem; }
+
+  /* ── 30MIN CONFIRMATION TAB ── */
+  .confirm-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 10px;
+    display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+    transition: border-color .2s;
+  }
+  .confirm-card.confirmed  { border-color: rgba(0,200,150,.4); background: rgba(0,200,150,.04); }
+  .confirm-card.unconfirmed{ border-color: rgba(240,165,0,.25); }
+  .confirm-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .confirm-sym { font-family: var(--mono); font-weight: 700; font-size: .95rem; color: var(--bright); }
+  .confirm-1d  { font-family: var(--mono); font-size: .68rem; color: var(--muted); }
+  .confirm-status {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: .72rem; font-weight: 700;
+    padding: 5px 12px; border-radius: 20px;
+  }
+  .status-confirmed   { background: rgba(0,200,150,.12); color: var(--bull); border: 1px solid rgba(0,200,150,.3); }
+  .status-unconfirmed { background: rgba(240,165,0,.1);  color: var(--warn); border: 1px solid rgba(240,165,0,.25); }
+  .confirm-detail { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+  .confirm-detail span { color: var(--text); }
+  .confirm-2h-badge {
+    display: inline-block; font-family: var(--mono); font-size: .65rem;
+    padding: 2px 8px; border-radius: 3px; margin-left: 6px;
+    background: rgba(0,200,150,.1); color: var(--bull); border: 1px solid rgba(0,200,150,.2);
+  }
+  .confirm-2h-badge.bear {
+    background: rgba(255,69,96,.1); color: var(--bear); border-color: rgba(255,69,96,.2);
+  }
+  .pulse-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--warn);
+    animation: pulse 1.5s infinite; display: inline-block;
+  }
+  .confirm-grid { display: flex; flex-direction: column; gap: 8px; }
+  .no-watch { text-align: center; padding: 50px 20px; color: var(--muted); font-family: var(--mono); font-size: .8rem; }
+  .confirm-card.tp-reached { border-color: rgba(255,69,96,.35); background: rgba(255,69,96,.03); }
+
+  @media (max-width: 600px) {
+    .stat-card { min-width: 90px; }
+    .notif-btn { margin-left: 0; width: 100%; }
+    .confirm-card { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="scan-line"></div>
+
+<header>
+  <div class="wrap">
+    <div class="header-inner">
+      <div class="logo">ORCHEM <span>BOT</span></div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span id="last-scan">Never scanned</span>
+        <div class="status-pill">
+          <div class="dot" id="status-dot"></div>
+          <span id="status-text">IDLE</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="controls">
+    <button class="btn btn-primary" id="scan-btn" onclick="startScan()">▶ SCAN MARKET</button>
+    <button class="btn btn-ghost" id="auto-btn" onclick="toggleAuto()">AUTO-SCAN OFF</button>
+    <button class="btn btn-ghost notif-btn" id="notif-btn" onclick="requestNotifications()">🔔 ENABLE ALERTS</button>
+  </div>
+
+  <!-- PHASE 3 FILTER STATUS -->
+  <div style="display:flex;gap:8px;flex-wrap:wrap;padding:10px 0 0;">
+    <div style="font-family:var(--mono);font-size:.68rem;color:var(--muted);display:flex;align-items:center;gap:6px;">
+      <span style="color:var(--bull)">●</span> MA50 Trend Filter ON
+    </div>
+    <div style="font-family:var(--mono);font-size:.68rem;color:var(--muted);display:flex;align-items:center;gap:6px;">
+      <span style="color:var(--bull)">●</span> Volume Filter ON (1.2x avg)
+    </div>
+
+  </div>
+
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-bar"></div></div>
+    <div class="progress-label" id="progress-label">Initialising…</div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card"><div class="stat-label">Pairs Scanned</div><div class="stat-value" id="stat-scanned">—</div></div>
+    <div class="stat-card"><div class="stat-label">Total Setups</div><div class="stat-value" id="stat-total">—</div></div>
+    <div class="stat-card"><div class="stat-label">Engulfing Bull</div><div class="stat-value bull" id="stat-ebull">—</div></div>
+    <div class="stat-card"><div class="stat-label">Engulfing Bear</div><div class="stat-value bear" id="stat-ebear">—</div></div>
+    <div class="stat-card"><div class="stat-label">Aux Breakout ▲</div><div class="stat-value warn" id="stat-abull">—</div></div>
+    <div class="stat-card"><div class="stat-label">Aux Breakout ▼</div><div class="stat-value bear" id="stat-abear">—</div></div>
+  </div>
+
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('engulf', this)">ENGULFING CANDLES</button>
+    <button class="tab" onclick="switchTab('aux', this)">AUXILIARY BREAKOUTS</button>
+    <button class="tab" onclick="switchTab('confirm', this)">30MIN CONFIRMATION <span id="confirm-badge" style="background:var(--bull);color:#000;border-radius:10px;padding:1px 7px;font-size:.65rem;margin-left:4px;display:none">0</span></button>
+    <button class="tab" onclick="switchTab('tradelog', this)">TRADE LOG <span id="log-badge" style="background:var(--muted);color:#fff;border-radius:10px;padding:1px 7px;font-size:.65rem;margin-left:4px">0</span></button>
+  </div>
+
+  <div class="filters" id="filters-engulf">
+    <button class="filter-btn active"  data-f="all"      onclick="setFilter('all',this)">ALL</button>
+    <button class="filter-btn bull-f"  data-f="bull"     onclick="setFilter('bull',this)">BULLISH</button>
+    <button class="filter-btn bear-f"  data-f="bear"     onclick="setFilter('bear',this)">BEARISH</button>
+    <button class="filter-btn"         data-f="rev-bull" onclick="setFilter('rev-bull',this)">BULL REVERSAL</button>
+    <button class="filter-btn"         data-f="rev-bear" onclick="setFilter('rev-bear',this)">BEAR REVERSAL</button>
+    <button class="filter-btn"         data-f="eng-bull" onclick="setFilter('eng-bull',this)">BULL ENGULFING</button>
+    <button class="filter-btn"         data-f="eng-bear" onclick="setFilter('eng-bear',this)">BEAR ENGULFING</button>
+  </div>
+
+  <div class="filters" id="filters-aux" style="display:none;">
+    <button class="filter-btn active" data-f="all"      onclick="setFilterAux('all',this)">ALL</button>
+    <button class="filter-btn bull-f" data-f="bull"     onclick="setFilterAux('bull',this)">BULLISH BREAK</button>
+    <button class="filter-btn bear-f" data-f="bear"     onclick="setFilterAux('bear',this)">BEARISH BREAK</button>
+  </div>
+
+  <!-- 30MIN CONFIRMATION PANEL -->
+  <div id="confirm-panel" style="display:none; padding: 16px 0 40px;">
+    <div class="section-title">30MIN ENTRY CONFIRMATION WATCH</div>
+    <div class="confirm-grid" id="confirm-grid">
+      <div class="no-watch">📡 Run a 1D scan first — flagged pairs will appear here for 30min confirmation</div>
+    </div>
+  </div>
+
+  <!-- TRADE LOG PANEL -->
+  <div id="tradelog-panel" style="display:none; padding: 16px 0 40px;">
+    <div class="section-title">TRADE LOG</div>
+
+    <!-- Stats row -->
+    <div class="log-stats" id="log-stats">
+      <div class="log-stat"><div class="log-stat-label">Total Signals</div><div class="log-stat-value" id="log-total">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">🤖 Bot Wins</div><div class="log-stat-value" style="color:var(--bull)" id="log-auto-wins">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">🤖 Bot Losses</div><div class="log-stat-value" style="color:var(--bear)" id="log-auto-losses">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">🤖 Bot Accuracy</div><div class="log-stat-value" style="color:var(--warn)" id="log-auto-winrate">—</div></div>
+      <div class="log-stat"><div class="log-stat-label">✋ Your Wins</div><div class="log-stat-value" style="color:var(--bull)" id="log-wins">0</div></div>
+      <div class="log-stat"><div class="log-stat-label">✋ Your Rate</div><div class="log-stat-value" style="color:var(--accent)" id="log-winrate">—</div></div>
+    </div>
+
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;padding:14px 0 0;align-items:center;">
+      <button class="clear-btn" onclick="clearLog()">🗑 Clear Log</button>
+      <button class="export-btn" onclick="exportLog()">⬇ Export CSV</button>
+    </div>
+
+    <!-- Table -->
+    <div style="overflow-x:auto;margin-top:12px;">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>DATE</th>
+            <th>SYMBOL</th>
+            <th>DIRECTION</th>
+            <th>SIGNAL TYPE</th>
+            <th>ENTRY</th>
+            <th>TP</th>
+            <th>SL</th>
+            <th>TRAILING</th>
+            <th>AGE</th>
+            <th>🤖 BOT RESULT</th>
+            <th>✋ YOUR RESULT</th>
+            <th>NOTES</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr><td colspan="11"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="results-section">
+    <div class="section-title" id="section-label">SETUPS DETECTED</div>
+    <div class="table-wrap">
+      <table id="results-table">
+        <thead id="thead-engulf">
+          <tr>
+            <th onclick="sortBy('symbol')">SYMBOL</th>
+            <th onclick="sortBy('patternType')">PATTERN TYPE</th>
+            <th onclick="sortBy('direction')">BIAS</th>
+            <th onclick="sortBy('price')">CLOSE PRICE</th>
+            <th onclick="sortBy('srLevel')">NEAREST S/R</th>
+            <th onclick="sortBy('proximity')">PROXIMITY ↕</th>
+            <th onclick="sortBy('strength')">STRENGTH</th>
+            <th onclick="sortBy('tpLevel')">🎯 TP TARGET</th>
+            <th onclick="sortBy('slLevel')">🛑 STOP LOSS</th>
+            <th onclick="sortBy('volRatio')">📊 VOL</th>
+            <th>DATE</th>
+          </tr>
+        </thead>
+        <thead id="thead-aux" style="display:none;">
+          <tr>
+            <th onclick="sortByAux('symbol')">SYMBOL</th>
+            <th>SIGNAL</th>
+            <th onclick="sortByAux('direction')">DIRECTION</th>
+            <th onclick="sortByAux('closePrice')">CLOSE PRICE</th>
+            <th onclick="sortByAux('rangeHigh')">RANGE HIGH</th>
+            <th onclick="sortByAux('rangeLow')">RANGE LOW</th>
+            <th onclick="sortByAux('candlesSinceEngulf')">CANDLES IN RANGE ↕</th>
+            <th>DATE</th>
+          </tr>
+        </thead>
+        <tbody id="results-body">
+          <tr><td colspan="8">
+            <div class="empty-state">
+              <div class="empty-icon">📡</div>
+              <div class="empty-title">Scanner ready</div>
+              <div class="empty-sub">Hit SCAN MARKET to search all Binance USDT perpetuals on 1D</div>
+            </div>
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+/* ═══════════════════════════════════════
+   CONFIG
+═══════════════════════════════════════ */
+const SR_PROXIMITY_PCT   = 5;
+const SWING_LOOKBACK     = 60;   // candles fetched
+const AUTO_INTERVAL_MS   = 60 * 60 * 1000; // 1 hour
+const BINANCE            = 'https://fapi.binance.com';
+const PROXY              = 'https://corsproxy.io/?url=';
+
+// ── PHASE 3 FILTERS ──
+const MA_PERIOD          = 50;   // 50-day MA for trend filter
+const VOL_LOOKBACK       = 20;   // candles to calculate average volume
+const VOL_MULTIPLIER     = 1.2;  // breakout candle must be 1.2x average volume
+// 2H time-of-day filter: disabled (all hours valid)
+const EXTREME_NEAR_PCT   = 5;    // skip if within 5% of 50-day high/low
+const EXTREME_MOVE_PCT   = 70;   // skip bearish if already 70%+ below 50-day high (or bull if 70%+ above 50-day low)
+const MIN_TP_PCT         = 4;    // minimum TP potential % — skip signals with less than 4% to TP
+
+// ── TELEGRAM ALERTS ──
+const TG_TOKEN   = '8710884236:AAGUUyZ19S6EpT_1Sf9oe8trEtdelD2CvhM';
+const TG_CHAT_ID = '1742837981';
+
+/* ═══════════════════════════════════════
+   STATE
+═══════════════════════════════════════ */
+let engulfResults  = [];
+let auxResults     = [];
+let watchlist      = []; // pairs flagged by 1D scan, being watched on 30min
+let confirmResults = []; // 30min confirmation results
+let tradeLog       = JSON.parse(localStorage.getItem('orchem_trade_log') || '[]'); // persists across sessions
+let tgAlertedPairs = new Set(); // track pairs already sent via Telegram this session
+let activeTab      = 'engulf';
+let activeFilter   = 'all';
+let activeFilterAux= 'all';
+let sortKey        = 'proximity';
+let sortDir        = 1;
+let sortKeyAux     = 'candlesSinceEngulf';
+let sortDirAux     = -1;
+let autoTimer      = null;
+let confirmTimer   = null;
+let watchlistClearTimer = null;
+let notifGranted   = false;
+
+/* ═══════════════════════════════════════
+   BINANCE HELPERS
+═══════════════════════════════════════ */
+async function apiFetch(url) {
+  // 1) Try direct (desktop / permissive browsers)
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(9000) });
+    if (r.ok) return r;
+  } catch(_) {}
+  // 2) Try corsproxy.io
+  try {
+    const r = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
+    if (r.ok) return r;
+  } catch(_) {}
+  // 3) Try allorigins
+  try {
+    const r = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url));
+    if (r.ok) return r;
+  } catch(_) {}
+  return null;
+}
+
+async function safeJson(r) {
+  if (!r) return null;
+  try {
+    const text = await r.text();
+    // allorigins wraps in {contents:...}
+    const raw = JSON.parse(text);
+    if (raw && typeof raw === 'object' && raw.contents) return JSON.parse(raw.contents);
+    return raw;
+  } catch(_) { return null; }
+}
+
+async function fetchSymbols() {
+  const r = await apiFetch(`${BINANCE}/fapi/v1/exchangeInfo`);
+  const d = await safeJson(r);
+  if (!d || !Array.isArray(d.symbols)) throw new Error('Could not reach Binance API. Check your internet connection.');
+  return d.symbols
+    .filter(s => s.quoteAsset==='USDT' && s.status==='TRADING' && s.contractType==='PERPETUAL')
+    .map(s => s.symbol);
+}
+
+async function fetchKlines(symbol, limit=SWING_LOOKBACK) {
+  const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=${limit}`);
+  const raw = await safeJson(r);
+  if (!Array.isArray(raw)) return null;
+  return raw.map(k => ({
+    time:      k[0],
+    open:      parseFloat(k[1]),
+    high:      parseFloat(k[2]),
+    low:       parseFloat(k[3]),
+    close:     parseFloat(k[4]),
+    volume:    parseFloat(k[5]),
+    isBullish: parseFloat(k[4]) >= parseFloat(k[1])
+  }));
+}
+
+/* ═══════════════════════════════════════
+   CORE LOGIC — UNIFIED BOUNDARY SYSTEM
+   
+   A valid engulfing candle must close
+   OUTSIDE the last valid engulfing candle's
+   high/low boundary. Everything that closes
+   inside = auxiliary market (no signal).
+═══════════════════════════════════════ */
+
+// Check if curr closes outside boundary candle
+function breaksBullish(boundary, curr) {
+  return curr.close > boundary.high;
+}
+function breaksBearish(boundary, curr) {
+  return curr.close < boundary.low;
+}
+
+// Classify engulfing type based on parent and current candle colors
+// Bull Reversal:  parent=Red,   curr=Green → green close > parent high
+// Bear Reversal:  parent=Green, curr=Red   → red close < parent low
+// Bull Engulfing: parent=Green, curr=Green → green close > parent high
+// Bear Engulfing: parent=Red,   curr=Red   → red close < parent low
+function classifyPattern(parent, curr) {
+  const parentRed   = !parent.isBullish;
+  const parentGreen =  parent.isBullish;
+  const currGreen   =  curr.isBullish;
+  const currRed     = !curr.isBullish;
+
+  if (curr.close > parent.high) {
+    // Bullish break
+    if (parentRed   && currGreen) return { label: 'Bull Reversal',  patternType: 'rev-bull', direction: 'bull' };
+    if (parentGreen && currGreen) return { label: 'Bull Engulfing', patternType: 'eng-bull', direction: 'bull' };
+    if (parentRed   && currRed)   return { label: 'Bull Reversal',  patternType: 'rev-bull', direction: 'bull' };
+    if (parentGreen && currRed)   return { label: 'Bull Engulfing', patternType: 'eng-bull', direction: 'bull' };
+  }
+  if (curr.close < parent.low) {
+    // Bearish break
+    if (parentGreen && currRed)   return { label: 'Bear Reversal',  patternType: 'rev-bear', direction: 'bear' };
+    if (parentRed   && currRed)   return { label: 'Bear Engulfing', patternType: 'eng-bear', direction: 'bear' };
+    if (parentGreen && currGreen) return { label: 'Bear Reversal',  patternType: 'rev-bear', direction: 'bear' };
+    if (parentRed   && currGreen) return { label: 'Bear Engulfing', patternType: 'eng-bear', direction: 'bear' };
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════
+// PARENT CANDLE (BOUNDARY) LOGIC
+//
+// The boundary is the most recent "parent candle" —
+// the most recent candle whose HIGH and LOW have NOT
+// been exceeded by the CLOSE of ANY subsequent candle
+// up to (but not including) the current candle.
+//
+// All candles after the parent = auxiliary (inside it).
+// Current candle fires a signal ONLY if it closes
+// above parent.high (bullish) or below parent.low (bearish).
+// ═══════════════════════════════════════
+
+// ═══════════════════════════════════════
+// BOUNDARY LOGIC — FINAL CORRECT VERSION
+//
+// Step 1: Walk forward to find the last CLOSE-based engulfing
+//         (the "parent" candle whose close broke outside previous parent)
+//
+// Step 2: From the parent onward, track the HIGHEST HIGH (shadow)
+//         and LOWEST LOW (shadow) seen among all auxiliary candles.
+//         Each new wick that exceeds the boundary pushes it outward.
+//
+// Step 3: Signal fires ONLY when current candle's CLOSE exceeds
+//         the running boundary high OR drops below the running boundary low.
+//
+// This matches the rule: wicks update the breakout level,
+// only a CLOSE outside the wick-adjusted boundary = valid signal.
+// ═══════════════════════════════════════
+
+const BOUNDARY_LOOKBACK = 50; // only look back 20 candles for boundary
+
+function findBoundary(closed) {
+  const n = closed.length;
+  if (n < 4) return null;
+
+  // ══════════════════════════════════════════════════
+  // BOUNDARY LOGIC
+  //
+  // Only look at the last BOUNDARY_LOOKBACK candles (excluding current).
+  // Walk forward through that window:
+  // - When a candle's CLOSE breaks outside current boundary → new parent, boundary resets
+  // - Otherwise → auxiliary candle, boundary expands via wicks only
+  //
+  // Signal fires when current candle CLOSE > boundaryHigh (bull)
+  //                                   OR < boundaryLow  (bear)
+  //
+  // auxCount = 0 → immediate next after parent → Engulfing/Reversal
+  // auxCount >= 1 → candles in between → Auxiliary Breakout
+  // ══════════════════════════════════════════════════
+
+  // Window: last BOUNDARY_LOOKBACK candles before current
+  const windowStart = Math.max(0, n - 1 - BOUNDARY_LOOKBACK);
+  const window      = closed.slice(windowStart, n - 1); // excludes current (closed[n-1])
+  const wn          = window.length;
+  if (wn < 2) return null;
+
+  let parentIdx    = 0;
+  let boundaryHigh = window[0].high;
+  let boundaryLow  = window[0].low;
+
+  for (let i = 1; i < wn; i++) {
+    const c = window[i];
+    if (c.close > boundaryHigh || c.close < boundaryLow) {
+      parentIdx    = i;
+      boundaryHigh = c.high;
+      boundaryLow  = c.low;
+    } else {
+      if (c.high > boundaryHigh) boundaryHigh = c.high;
+      if (c.low  < boundaryLow)  boundaryLow  = c.low;
+    }
+  }
+
+  const auxCount   = (wn - 1) - parentIdx; // candles between parent and current
+  const parentCandle = window[parentIdx];
+
+  return { parentCandle, boundaryHigh, boundaryLow, auxCount };
+}
+
+/* ═══════════════════════════════════════
+   S/R LEVELS (swing highs/lows)
+═══════════════════════════════════════ */
+function findSwingLevels(candles) {
+  const levels = [];
+  for (let i = 2; i < candles.length - 2; i++) {
+    if (candles[i].high > candles[i-1].high && candles[i].high > candles[i-2].high &&
+        candles[i].high > candles[i+1].high && candles[i].high > candles[i+2].high) {
+      levels.push({ price: candles[i].high, type: 'resistance' });
+    }
+    if (candles[i].low < candles[i-1].low && candles[i].low < candles[i-2].low &&
+        candles[i].low < candles[i+1].low && candles[i].low < candles[i+2].low) {
+      levels.push({ price: candles[i].low, type: 'support' });
+    }
+  }
+  return levels;
+}
+
+function nearestLevel(price, levels) {
+  let best = null, bestDist = Infinity;
+  for (const lvl of levels) {
+    const dist = Math.abs(price - lvl.price) / lvl.price * 100;
+    if (dist <= SR_PROXIMITY_PCT && dist < bestDist) {
+      best = { ...lvl, proximity: dist };
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+// ── EXTREME ZONE FILTER ──
+// Rule 1 (Near extreme): Skip bearish if price is within 5% of 50-day low
+//                        Skip bullish if price is within 5% of 50-day high
+// Rule 2 (Already moved): Skip bearish if price already dropped 70%+ from 50-day high
+//                         Skip bullish if price already pumped 70%+ above 50-day low
+function isTooCloseToExtreme(closed, direction) {
+  if (!closed || closed.length < 2) return false;
+  const price       = closed[closed.length - 1].close;
+  const highestHigh = Math.max(...closed.map(c => c.high));
+  const lowestLow   = Math.min(...closed.map(c => c.low));
+
+  if (direction === 'bear') {
+    // Rule 1: price within 5% of 50-day low
+    const nearLow = ((price - lowestLow) / lowestLow * 100) <= EXTREME_NEAR_PCT;
+    // Rule 2: price already 70%+ below 50-day high (move is exhausted)
+    const alreadyCrashed = ((highestHigh - price) / highestHigh * 100) >= EXTREME_MOVE_PCT;
+    return nearLow || alreadyCrashed;
+  } else {
+    // Rule 1: price within 5% of 50-day high
+    const nearHigh = ((highestHigh - price) / highestHigh * 100) <= EXTREME_NEAR_PCT;
+    // Rule 2: price already 70%+ above 50-day low (pump is exhausted)
+    const alreadyPumped = ((price - lowestLow) / lowestLow * 100) >= EXTREME_MOVE_PCT;
+    return nearHigh || alreadyPumped;
+  }
+}
+
+// Find the nearest resistance ABOVE price (take profit for longs)
+// or nearest support BELOW price (take profit for shorts)
+// ── PHASE 3 HELPERS ──
+
+// Calculate simple moving average of closes
+function calcMA(candles, period) {
+  if (candles.length < period) return null;
+  const slice = candles.slice(-period);
+  return slice.reduce((sum, c) => sum + c.close, 0) / period;
+}
+
+// Calculate average volume over lookback period
+function avgVolume(candles, lookback) {
+  const slice = candles.slice(-lookback - 1, -1); // exclude current
+  if (!slice.length) return 0;
+  return slice.reduce((sum, c) => sum + c.volume, 0) / slice.length;
+}
+
+// Check if the current hour (UTC) is in low-liquidity window
+function isLowLiquidityHour() {
+  const hour = new Date().getUTCHours();
+  return hour >= LOW_LIQ_START_UTC && hour < LOW_LIQ_END_UTC;
+}
+
+function findTPLevel(price, levels, direction) {
+  if (direction === 'bull') {
+    // TP must be STRICTLY above entry — filter ALL levels above price regardless of type
+    // (sometimes swing highs are labeled as support, so check all levels)
+    const above = levels
+      .filter(l => l.price > price * 1.005) // at least 0.5% above entry — hard check
+      .sort((a, b) => a.price - b.price); // closest first
+    return above[0] || null;
+  } else {
+    // TP must be STRICTLY below entry
+    const below = levels
+      .filter(l => l.price < price * 0.995) // at least 0.5% below entry — hard check
+      .sort((a, b) => b.price - a.price); // closest first
+    return below[0] || null;
+  }
+}
+
+// Calculate potential % gain to TP
+function calcRR(entryPrice, tpPrice) {
+  return Math.abs((tpPrice - entryPrice) / entryPrice * 100).toFixed(2);
+}
+
+// Find Stop Loss level — mirror of TP logic but on the opposite side
+// For longs: nearest support BELOW entry (where trade idea is invalidated)
+// For shorts: nearest resistance ABOVE entry
+function findSLLevel(price, levels, direction) {
+  if (direction === 'bull') {
+    const below = levels
+      .filter(l => l.type === 'support' && l.price < price * 0.995)
+      .sort((a, b) => b.price - a.price); // closest first
+    return below[0] || null;
+  } else {
+    const above = levels
+      .filter(l => l.type === 'resistance' && l.price > price * 1.005)
+      .sort((a, b) => a.price - b.price); // closest first
+    return above[0] || null;
+  }
+}
+
+// Signal age helper — returns hours since signal fired and color code
+function getSignalAge(signalTimestamp) {
+  if (!signalTimestamp) return null;
+  const hours = (Date.now() - signalTimestamp) / (1000 * 60 * 60);
+  let color, label;
+  if (hours <= 8) {
+    color = 'var(--bull)'; label = 'Fresh';
+  } else if (hours <= 16) {
+    color = 'var(--warn)'; label = 'Aging';
+  } else {
+    color = 'var(--bear)'; label = 'Stale';
+  }
+  return { hours: hours.toFixed(1), color, label };
+}
+
+// ── TRAILING STOP SUGGESTION ──
+// Calculate suggested trailing stop % based on average 30min candle range
+// of the specific pair. Trailing should be wide enough to survive normal
+// candle swings but tight enough to lock in meaningful profit.
+// Rule: suggested trailing = 1.5x the average 30min candle range %
+async function calcSuggestedTrailing(symbol) {
+  try {
+    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=20`);
+    const raw = await safeJson(r);
+    if (!Array.isArray(raw) || raw.length < 5) return null;
+
+    // Calculate average candle range % over last 20 candles
+    const ranges = raw.map(k => {
+      const high  = parseFloat(k[2]);
+      const low   = parseFloat(k[3]);
+      const close = parseFloat(k[4]);
+      return ((high - low) / close) * 100;
+    });
+    const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+
+    // Suggested trailing = 1.5x average range, rounded to 1 decimal
+    const suggested = Math.max(0.5, (avgRange * 1.5)).toFixed(1);
+    return parseFloat(suggested);
+  } catch(_) {
+    return null;
+  }
+}
+
+/* ═══════════════════════════════════════
+   ANALYSE ONE SYMBOL
+═══════════════════════════════════════ */
+function analyseSymbol(symbol, candles) {
+  if (!candles || candles.length < 5) return { engulf: null, aux: null };
+
+  const closed  = candles.slice(0, -1); // exclude live/forming candle
+  const curr    = closed[closed.length - 1]; // last fully closed candle
+  const dateStr = new Date(curr.time).toLocaleDateString('en-GB', { day:'2-digit', month:'short' });
+  const levels  = findSwingLevels(closed);
+
+  // ── PHASE 3: TREND FILTER (50-day MA) ──
+  const ma50   = calcMA(closed, MA_PERIOD);
+
+  // ── PHASE 3: VOLUME FILTER ──
+  const avgVol  = avgVolume(closed, VOL_LOOKBACK);
+  const currVol = curr.volume || 0;
+  const volOk   = avgVol === 0 || currVol >= avgVol * VOL_MULTIPLIER;
+  const volRatio = avgVol > 0 ? (currVol / avgVol).toFixed(1) : null;
+
+  // Find the boundary (parent + wick-adjusted levels)
+  const boundary = findBoundary(closed);
+  if (!boundary) return { engulf: null, aux: null };
+
+  const { parentCandle, boundaryHigh, boundaryLow, auxCount } = boundary;
+
+  // Signal fires ONLY when current CLOSE exceeds the wick-adjusted boundary
+  const breaksBull = curr.close > boundaryHigh;
+  const breaksBear = curr.close < boundaryLow;
+
+  // ── EXTREME ZONE FILTER ──
+  // Before firing any signal, check if price is already at an extreme zone
+  if (breaksBull && isTooCloseToExtreme(closed, 'bull')) return { engulf: null, aux: null };
+  if (breaksBear && isTooCloseToExtreme(closed, 'bear')) return { engulf: null, aux: null };
+
+  // Phase 3 filters active: MA50 trend, volume confirmation, 30min confirmation
+
+  // ── SIGNAL CLASSIFICATION ──
+  // auxCount = number of candles between parent and current
+  // auxCount === 0 → current is IMMEDIATE next after parent → Engulfing/Reversal
+  // auxCount >= 1  → candles existed between parent and current → Auxiliary Breakout
+  // No break       → still inside boundary → Awaiting Breakout
+
+  let engulf = null;
+  let aux    = null;
+
+  if (breaksBull || breaksBear) {
+    // ── PHASE 3: Apply trend filter ──
+    const trendOk = !ma50 || (breaksBull ? curr.close > ma50 : curr.close < ma50);
+
+    if (auxCount === 0) {
+      // IMMEDIATE breakout → valid Engulfing or Reversal
+      const pattern = classifyPattern(parentCandle, curr);
+      if (pattern && trendOk && volOk) {
+        const lvl = nearestLevel(curr.close, levels);
+        const tpLvl = findTPLevel(curr.close, levels, pattern.direction);
+        const slLvl = findSLLevel(curr.close, levels, pattern.direction);
+
+        // Skip if TP potential is less than MIN_TP_PCT
+        if (tpLvl) {
+          const tpPct = Math.abs((tpLvl.price - curr.close) / curr.close * 100);
+          if (tpPct < MIN_TP_PCT) return { engulf: null, aux: null };
+        }
+
+        engulf = {
+          symbol, price: curr.close, dateStr,
+          boundaryHigh, boundaryLow, auxCandles: auxCount,
+          signalHigh: curr.high, signalLow: curr.low,
+          ...pattern,
+          srLevel:   lvl ? lvl.price    : 0,
+          srType:    lvl ? lvl.type      : 'none',
+          proximity: lvl ? lvl.proximity : 999,
+          hasSR:     !!lvl,
+          tpLevel:   tpLvl ? tpLvl.price : null,
+          tpGain:    tpLvl ? calcRR(curr.close, tpLvl.price) : null,
+          slLevel:   slLvl ? slLvl.price : null,
+          slRisk:    slLvl ? calcRR(curr.close, slLvl.price) : null,
+          volRatio,
+          ma50: ma50 ? ma50.toFixed(4) : null,
+          strength:  calcStrength(curr, levels)
+        };
+      }
+    } else {
+      // DELAYED breakout → Auxiliary Breakout
+      const direction = breaksBull ? 'bull' : 'bear';
+      if (trendOk && volOk) {
+        const lvl   = nearestLevel(curr.close, levels);
+        const tpLvl = findTPLevel(curr.close, levels, direction);
+        const slLvl = findSLLevel(curr.close, levels, direction);
+
+        // Skip if TP potential is less than MIN_TP_PCT
+        if (tpLvl) {
+          const tpPct = Math.abs((tpLvl.price - curr.close) / curr.close * 100);
+          if (tpPct < MIN_TP_PCT) return { engulf: null, aux: null };
+        }
+
+        aux = {
+          symbol,
+          direction,
+          signal: breaksBull ? '▲ Aux Bull Breakout' : '▼ Aux Bear Breakout',
+          closePrice: curr.close,
+          rangeHigh: boundaryHigh,
+          rangeLow:  boundaryLow,
+          signalHigh: curr.high, signalLow: curr.low,
+          candlesSinceEngulf: auxCount,
+          dateStr,
+          srLevel:   lvl ? lvl.price    : 0,
+          srType:    lvl ? lvl.type      : 'none',
+          proximity: lvl ? lvl.proximity : 999,
+          hasSR:     !!lvl,
+          tpLevel:   tpLvl ? tpLvl.price : null,
+          tpGain:    tpLvl ? calcRR(curr.close, tpLvl.price) : null,
+          slLevel:   slLvl ? slLvl.price : null,
+          slRisk:    slLvl ? calcRR(curr.close, slLvl.price) : null,
+          volRatio,
+          ma50: ma50 ? ma50.toFixed(4) : null,
+        };
+      }
+    }
+  } else if (auxCount >= 1) {
+    // Still inside boundary → Awaiting Breakout
+    aux = {
+      symbol, direction: null,
+      signal: '⏳ Awaiting Breakout',
+      closePrice: curr.close,
+      rangeHigh: boundaryHigh,
+      rangeLow:  boundaryLow,
+      candlesSinceEngulf: auxCount,
+      dateStr
+    };
+  }
+
+  return { engulf, aux };
+}
+
+function calcStrength(candle, levels) {
+  const count = levels.filter(l => Math.abs(l.price - candle.close) / candle.close * 100 < 10).length;
+  return Math.min(100, count * 18 + 28);
+}
+
+/* ═══════════════════════════════════════
+   30MIN CONFIRMATION ENGINE
+   Fetches 30min candles for a symbol AFTER
+   a given timestamp to find the first close
+   beyond the 1D signal candle's high/low.
+═══════════════════════════════════════ */
+async function fetch2HKlines(symbol, sinceTimestamp) {
+  // Fetch last 100 30min candles
+  const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=100`);
+  const raw = await safeJson(r);
+  if (!Array.isArray(raw)) return null;
+  const all = raw.map(k => ({
+    time:      k[0],
+    open:      parseFloat(k[1]),
+    high:      parseFloat(k[2]),
+    low:       parseFloat(k[3]),
+    close:     parseFloat(k[4]),
+    isBullish: parseFloat(k[4]) >= parseFloat(k[1])
+  }));
+  // Only keep candles that OPENED after the 1D signal candle closed
+  return all.filter(c => c.time >= sinceTimestamp);
+}
+
+// ═══════════════════════════════════════
+// ═══════════════════════════════════════
+// 30MIN CONFIRMATION — CORRECT BOUNDARY LOGIC
+//
+// Applies the SAME boundary system as the 1D scan but on 30min candles.
+// The 1D signal candle's high/low defines the INITIAL boundary.
+// Subsequent 30min candles that stay inside are auxiliary — their wicks
+// can extend the boundary outward but only a CLOSE outside fires confirmation.
+//
+// This prevents spike candles (wick breaks that close back inside) from
+// falsely triggering confirmation — exactly the same rule as 1D.
+// ═══════════════════════════════════════
+function analyse2H(symbol, candles2h, requiredDirection, signalHigh, signalLow) {
+  if (!candles2h || candles2h.length < 2) return null;
+
+  // Exclude the currently forming (still open) 30min candle
+  const closed = candles2h.slice(0, -1);
+  if (closed.length < 1) return null;
+
+  // ── STEP 1: Set initial boundary from the 1D signal candle's high/low ──
+  // This IS the boundary — the 30min candles must break OUTSIDE this
+  let boundaryHigh = signalHigh;
+  let boundaryLow  = signalLow;
+  let parentIdx    = -1; // -1 means the 1D candle itself is the parent
+
+  // ── STEP 2: Walk through 30min candles applying the same boundary rules ──
+  // - If a 30min close breaks outside boundary → new parent, boundary resets
+  // - If a 30min wick exceeds boundary but close stays inside → expand boundary outward
+  // - Confirmation fires on the FIRST close that breaks the boundary
+  //   in the REQUIRED DIRECTION matching the 1D signal
+
+  for (let i = 0; i < closed.length; i++) {
+    const c = closed[i];
+
+    const breaksBull = c.close > boundaryHigh;
+    const breaksBear = c.close < boundaryLow;
+
+    if (breaksBull || breaksBear) {
+      // This 30min candle's CLOSE broke outside the boundary
+      const direction = breaksBull ? 'bull' : 'bear';
+
+      // Only confirm if it matches the required 1D direction
+      if (direction === requiredDirection) {
+        const closeTime = c.time + (30 * 60 * 1000);
+        const dateStr = new Date(closeTime).toLocaleString([], {
+          day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+        });
+        const auxCount = parentIdx === -1 ? i : i - parentIdx - 1;
+        const label = breaksBull
+          ? `30min Bull Breakout > $${fmt(boundaryHigh)}`
+          : `30min Bear Breakout < $${fmt(boundaryLow)}`;
+
+        return {
+          direction: requiredDirection,
+          label,
+          closePrice: c.close,
+          dateStr,
+          targetLevel: breaksBull ? boundaryHigh : boundaryLow,
+          auxCount
+        };
+      } else {
+        // Broke in the WRONG direction — this becomes new parent, reset boundary
+        parentIdx    = i;
+        boundaryHigh = c.high;
+        boundaryLow  = c.low;
+      }
+
+    } else {
+      // Close stayed inside — auxiliary 30min candle
+      // Expand boundary outward via wicks only (never inward)
+      if (c.high > boundaryHigh) boundaryHigh = c.high;
+      if (c.low  < boundaryLow)  boundaryLow  = c.low;
+    }
+  }
+
+  return null; // no valid 30min confirmation yet
+}
+
+async function run2HConfirmation() {
+  if (!watchlist.length) return;
+  confirmResults = [];
+
+  for (const item of watchlist) {
+    try {
+      const candles2h = await fetch2HKlines(item.symbol, item.signalTimestamp);
+      const result2h  = candles2h
+        ? analyse2H(item.symbol, candles2h, item.direction, item.signalHigh, item.signalLow)
+        : null;
+
+      // Get latest 30min close as proxy for current price
+      const latestPrice = candles2h && candles2h.length >= 2
+        ? candles2h[candles2h.length - 2].close
+        : item.entryPrice;
+
+      confirmResults.push({
+        ...item,
+        confirmed:    !!result2h,
+        signal2h:     result2h,
+        currentPrice: latestPrice
+      });
+
+      // Fire alert if newly confirmed
+      if (result2h && !item.alerted) {
+        item.alerted = true;
+        const dir      = result2h.direction === 'bull' ? '▲ LONG' : '▼ SHORT';
+        const dirEmoji = result2h.direction === 'bull' ? '🟢' : '🔴';
+
+        // ── RECALCULATE TP/SL FROM ACTUAL 30MIN ENTRY PRICE ──
+        // The entry price is result2h.closePrice (the 30min candle that confirmed)
+        // NOT the 1D candle close — this is what the trader actually enters at
+        const entryPrice = result2h.closePrice;
+
+        // Fetch fresh 1D klines to get current S/R levels
+        let confirmTpLevel = null, confirmTpGain = null;
+        let confirmSlLevel = null, confirmSlRisk = null;
+        try {
+          const freshKlines = await fetchKlines(item.symbol);
+          if (freshKlines && freshKlines.length > 5) {
+            const freshClosed = freshKlines.slice(0, -1);
+            const freshLevels = findSwingLevels(freshClosed);
+            const tpLvl = findTPLevel(entryPrice, freshLevels, item.direction);
+            const slLvl = findSLLevel(entryPrice, freshLevels, item.direction);
+            if (tpLvl) {
+              confirmTpLevel = tpLvl.price;
+              confirmTpGain  = calcRR(entryPrice, tpLvl.price);
+            }
+            if (slLvl) {
+              confirmSlLevel = slLvl.price;
+              confirmSlRisk  = calcRR(entryPrice, slLvl.price);
+            }
+          }
+        } catch(_) {}
+
+        // Update item with recalculated levels from actual entry price
+        // Safety check: TP must be above entry for longs, below for shorts
+        const tpValid = confirmTpLevel && (
+          (item.direction === 'bull' && confirmTpLevel > entryPrice) ||
+          (item.direction === 'bear' && confirmTpLevel < entryPrice)
+        );
+        const slValid = confirmSlLevel && (
+          (item.direction === 'bull' && confirmSlLevel < entryPrice) ||
+          (item.direction === 'bear' && confirmSlLevel > entryPrice)
+        );
+        item.tpLevel = tpValid ? confirmTpLevel : null;
+        item.tpGain  = tpValid ? confirmTpGain  : null;
+        item.slLevel = slValid ? confirmSlLevel : null;
+        item.slRisk  = slValid ? confirmSlRisk  : null;
+
+        // ── AUTO-LOG THE TRADE ──
+        logTrade(item, result2h);
+
+        // In-app toast
+        toast(`<span class="toast-sym">✅ ${item.symbol}</span><div class="toast-body">30min Confirmed! ${result2h.label} · ${dir}</div>`, result2h.direction);
+
+        // Browser notification (if permitted)
+        if (notifGranted) {
+          new Notification(`✅ Entry Confirmed: ${item.symbol}`, {
+            body: `${result2h.label} on 30min · ${dir} · from ${item.signal1d}`
+          });
+        }
+
+        // ── TELEGRAM ALERT (with correct entry-based TP/SL) ──
+        const tpText       = item.tpLevel     ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)` : '';
+        const slText       = item.slLevel     ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)` : '';
+        const trailingText = item.trailingPct ? `\n📌 Trailing Stop: ${item.trailingPct}% (set on Bybit)` : '';
+        tgAlertedPairs.add(item.symbol); // prevent duplicate scan summary for confirmed pairs
+        const tgMsg = `${dirEmoji} <b>ENTRY CONFIRMED</b>\n`
+          + `<b>${item.symbol.replace('USDT', '')}/USDT</b> · ${dir}\n`
+          + `Signal: ${item.signal1d}\n`
+          + `Confirmation: ${result2h.label}\n`
+          + `Entry: $${fmt(entryPrice)} · ${result2h.dateStr}`
+          + tpText + slText + trailingText;
+        sendTelegram(tgMsg);
+      }
+    } catch(_) {
+      confirmResults.push({ ...item, confirmed: false, signal2h: null });
+    }
+    await sleep(80);
+  }
+
+  renderConfirm();
+  updateConfirmBadge();
+}
+
+/* ═══════════════════════════════════════
+   MAIN SCAN
+═══════════════════════════════════════ */
+async function startScan() {
+  const btn = document.getElementById('scan-btn');
+  btn.disabled = true;
+  setStatus('SCANNING', true);
+  showProgress(true);
+  engulfResults = []; auxResults = [];
+
+  try {
+    const symbols = await fetchSymbols();
+    const total   = symbols.length;
+    let done = 0;
+
+    const BATCH = 10;
+    for (let i = 0; i < total; i += BATCH) {
+      const batch = symbols.slice(i, i + BATCH);
+      await Promise.all(batch.map(async sym => {
+        try {
+          const klines = await fetchKlines(sym);
+          const { engulf, aux } = analyseSymbol(sym, klines);
+          if (engulf) engulfResults.push(engulf);
+          if (aux)    auxResults.push(aux);
+        } catch(_) {}
+        done++;
+        const pct = Math.round(done / total * 100);
+        document.getElementById('progress-bar').style.width = pct + '%';
+        document.getElementById('progress-label').textContent =
+          `Scanning ${done}/${total} pairs… ${engulfResults.length} engulfing · ${auxResults.length} breakouts`;
+      }));
+      await sleep(120);
+    }
+
+    // Deduplicate by symbol — keep first occurrence only
+    const seenEngulf = new Set();
+    engulfResults = engulfResults.filter(r => {
+      if (seenEngulf.has(r.symbol)) return false;
+      seenEngulf.add(r.symbol);
+      return true;
+    });
+    const seenAux = new Set();
+    auxResults = auxResults.filter(r => {
+      if (seenAux.has(r.symbol)) return false;
+      seenAux.add(r.symbol);
+      return true;
+    });
+
+    updateStats(total);
+    renderActive();
+    notifyNew();
+
+    // ── BUILD 30MIN WATCHLIST from all 1D signals ──
+    const allSignals = [...engulfResults, ...auxResults.filter(r => r.direction !== null)];
+    // Signal timestamp = start of current UTC day (when last 1D candle opened)
+    // This ensures we catch all 30min candles formed after the daily close
+    const todayUTC = new Date();
+    todayUTC.setUTCHours(0, 0, 0, 0);
+    const dailyOpenTimestamp = todayUTC.getTime();
+
+    // Calculate trailing stop suggestions for all signals
+    const trailingMap = {};
+    await Promise.all(allSignals.map(async r => {
+      trailingMap[r.symbol] = await calcSuggestedTrailing(r.symbol);
+      await sleep(50);
+    }));
+
+    watchlist = allSignals.map(r => ({
+      symbol:          r.symbol,
+      direction:       r.direction,
+      signal1d:        r.label || r.signal,
+      signalTimestamp: dailyOpenTimestamp,
+      signalHigh:      r.signalHigh != null ? r.signalHigh : null,
+      signalLow:       r.signalLow  != null ? r.signalLow  : null,
+      // TP/SL stored from 1D for initial display only
+      // They will be RECALCULATED from actual 30min entry price at confirmation
+      tpLevel:         r.tpLevel || null,
+      tpGain:          r.tpGain  || null,
+      slLevel:         r.slLevel || null,
+      slRisk:          r.slRisk  || null,
+      trailingPct:     trailingMap[r.symbol] || null,
+      entryPrice:      r.price   || r.closePrice || null,
+      detectedAt:      Date.now(),
+      alerted:         false
+    }));
+
+    // Start 30min confirmation scan immediately
+    if (watchlist.length) {
+      toast(`👁 Watching ${watchlist.length} pairs for 30min confirmation`, 'neutral');
+      // ── Send watchlist to Service Worker for background alerts ──
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'START_WATCH',
+          watchlist: watchlist.map(w => ({ ...w, interval: '30m' })),
+          interval: AUTO_INTERVAL_MS,
+          alerted: []
+        });
+      }
+      run2HConfirmation();
+      if (confirmTimer) clearInterval(confirmTimer);
+      confirmTimer = setInterval(() => {
+        run2HConfirmation();
+        runAutoOutcomeChecks(); // check pending trade outcomes every hour
+      }, AUTO_INTERVAL_MS);
+
+      // Auto-clear watchlist at the NEXT daily candle close (00:00 UTC),
+      // not a fixed 24h timer from whenever the scan happened to run.
+      const nextMidnightUTC = new Date();
+      nextMidnightUTC.setUTCHours(24, 0, 0, 0);
+      const msUntilNextClose = nextMidnightUTC.getTime() - Date.now();
+
+      if (watchlistClearTimer) clearTimeout(watchlistClearTimer);
+      watchlistClearTimer = setTimeout(() => {
+        watchlist = []; confirmResults = [];
+        renderConfirm(); updateConfirmBadge();
+        if (confirmTimer) { clearInterval(confirmTimer); confirmTimer = null; }
+        toast('🔄 Daily candle closed — watchlist reset. Run a new scan.', 'neutral');
+      }, msUntilNextClose);
+    }
+
+    document.getElementById('last-scan').textContent =
+      `Last scan: ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+
+  } catch(e) {
+    toast(`Scan error: ${e.message}`, 'neutral');
+  }
+
+  btn.disabled = false;
+  setStatus('IDLE', false);
+  showProgress(false);
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ═══════════════════════════════════════
+   RENDER — ENGULFING TAB
+═══════════════════════════════════════ */
+function renderEngulf() {
+  const tbody = document.getElementById('results-body');
+  let data = [...engulfResults];
+
+  if (activeFilter !== 'all') {
+    if (activeFilter === 'bull')     data = data.filter(r => r.direction === 'bull');
+    if (activeFilter === 'bear')     data = data.filter(r => r.direction === 'bear');
+    if (activeFilter === 'rev-bull') data = data.filter(r => r.patternType === 'rev-bull');
+    if (activeFilter === 'rev-bear') data = data.filter(r => r.patternType === 'rev-bear');
+    if (activeFilter === 'eng-bull') data = data.filter(r => r.patternType === 'eng-bull');
+    if (activeFilter === 'eng-bear') data = data.filter(r => r.patternType === 'eng-bear');
+  }
+
+  data.sort((a,b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (typeof av === 'string') return av.localeCompare(bv) * sortDir;
+    return (av - bv) * sortDir;
+  });
+
+  if (!data.length) {
+    tbody.innerHTML = emptyHTML(engulfResults.length, 'engulfing setups');
+    return;
+  }
+
+  tbody.innerHTML = data.map(r => {
+    const isBull  = r.direction === 'bull';
+    const cls     = isBull ? 'badge-bull' : 'badge-bear';
+    const fill    = isBull ? 'var(--bull)' : 'var(--bear)';
+    const priceFmt = fmt(r.price);
+    const srFmt    = fmt(r.srLevel);
+    return `<tr>
+      <td class="symbol-cell">${r.symbol.replace('USDT','')}<span style="color:var(--muted);font-weight:400">/USDT</span></td>
+      <td><span class="pattern-badge ${cls}">${r.label}</span></td>
+      <td style="font-family:var(--mono);font-weight:700;font-size:.76rem;color:${fill}">${isBull?'LONG':'SHORT'}</td>
+      <td class="price-cell">$${priceFmt}</td>
+      <td style="font-family:var(--mono);font-size:.78rem;">${r.hasSR ? '$'+srFmt : '<span style="color:var(--muted)">—</span>'} <span style="color:var(--muted);font-size:.65rem">${r.hasSR ? r.srType.toUpperCase() : ''}</span></td>
+      <td style="font-family:var(--mono);color:var(--warn);font-size:.78rem;">${r.proximity.toFixed(2)}%</td>
+      <td>
+        <span class="signal-bar"><span class="signal-fill" style="width:${r.strength}%;background:${fill}"></span></span>
+        <span style="font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-left:6px">${r.strength}%</span>
+      </td>
+      <td style="font-family:var(--mono);font-size:.75rem;">
+        ${r.tpLevel
+          ? `<span style="color:var(--warn);font-weight:700">$${fmt(r.tpLevel)}</span>
+             <span style="color:var(--muted);font-size:.68rem"> +${r.tpGain}%</span>`
+          : '<span style="color:var(--muted)">—</span>'}
+      </td>
+      <td style="font-family:var(--mono);font-size:.75rem;">
+        ${r.slLevel
+          ? `<span style="color:var(--bear);font-weight:700">$${fmt(r.slLevel)}</span>
+             <span style="color:var(--muted);font-size:.68rem"> -${r.slRisk}%</span>`
+          : '<span style="color:var(--muted)">—</span>'}
+      </td>
+      <td style="font-family:var(--mono);font-size:.72rem;">
+        ${r.volRatio
+          ? `<span style="color:${parseFloat(r.volRatio)>=1.5?'var(--bull)':'var(--text)'}">
+             ${r.volRatio}x</span>`
+          : '—'}
+      </td>
+      <td style="font-family:var(--mono);color:var(--muted);font-size:.72rem">${r.dateStr}</td>
+    </tr>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════
+   RENDER — AUX BREAKOUT TAB
+═══════════════════════════════════════ */
+function renderAux() {
+  const tbody = document.getElementById('results-body');
+  let data = [...auxResults];
+
+  if (activeFilterAux !== 'all') {
+    data = data.filter(r => r.direction === activeFilterAux);
+  }
+
+  data.sort((a,b) => {
+    let av = a[sortKeyAux], bv = b[sortKeyAux];
+    if (typeof av === 'string') return av.localeCompare(bv) * sortDirAux;
+    return (av - bv) * sortDirAux;
+  });
+
+  if (!data.length) {
+    tbody.innerHTML = emptyHTML(auxResults.length, 'auxiliary breakouts');
+    return;
+  }
+
+  tbody.innerHTML = data.map(r => {
+    const isBull = r.direction === 'bull';
+    const isBear = r.direction === 'bear';
+    const fill   = isBull ? 'var(--bull)' : isBear ? 'var(--bear)' : 'var(--warn)';
+    const badge  = isBull ? 'badge-bull'  : isBear ? 'badge-bear'  : 'badge-aux';
+    const dirLabel = isBull ? 'BULLISH' : isBear ? 'BEARISH' : 'WATCHING';
+    return `<tr>
+      <td class="symbol-cell">${r.symbol.replace('USDT','')}<span style="color:var(--muted);font-weight:400">/USDT</span></td>
+      <td><span class="pattern-badge ${badge}">${r.signal}</span></td>
+      <td style="font-family:var(--mono);font-weight:700;font-size:.76rem;color:${fill}">${dirLabel}</td>
+      <td class="price-cell">$${fmt(r.closePrice)}</td>
+      <td style="font-family:var(--mono);font-size:.78rem;color:var(--bull)">$${fmt(r.rangeHigh)}</td>
+      <td style="font-family:var(--mono);font-size:.78rem;color:var(--bear)">$${fmt(r.rangeLow)}</td>
+      <td style="font-family:var(--mono);color:var(--warn);font-size:.78rem;text-align:center">${r.candlesSinceEngulf}</td>
+      <td style="font-family:var(--mono);color:var(--muted);font-size:.72rem">${r.dateStr}</td>
+    </tr>`;
+  }).join('');
+}
+
+function emptyHTML(total, label) {
+  return `<tr><td colspan="8"><div class="empty-state">
+    <div class="empty-icon">${total ? '🔍' : '📡'}</div>
+    <div class="empty-title">${total ? 'No results match this filter' : 'Scanner ready'}</div>
+    <div class="empty-sub">${total ? 'Try a different filter above' : 'Hit SCAN MARKET to search all Binance USDT perpetuals'}</div>
+  </div></td></tr>`;
+}
+
+function fmt(p) {
+  if (!p) return '—';
+  return p >= 1
+    ? p.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:4})
+    : p.toPrecision(4);
+}
+
+/* ═══════════════════════════════════════
+   TRADE LOG FUNCTIONS
+═══════════════════════════════════════ */
+
+// Add a confirmed trade to the log automatically
+function logTrade(item, result2h) {
+  const age = item.detectedAt ? getSignalAge(item.detectedAt) : null;
+  const entry = {
+    id:          Date.now(),
+    loggedAt:    Date.now(), // timestamp for auto outcome check
+    date:        new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }),
+    symbol:      item.symbol,
+    direction:   item.direction,
+    signal1d:    item.signal1d || '—',
+    entryPrice:  result2h.closePrice,
+    tpLevel:     item.tpLevel,
+    tpGain:      item.tpGain,
+    slLevel:     item.slLevel,
+    slRisk:      item.slRisk,
+    trailingPct: item.trailingPct,
+    signalAge:   age ? `${age.hours}h (${age.label})` : '—',
+    confirmTime: result2h.dateStr,
+    autoOutcome: 'open',   // auto-checked: 'win', 'loss', 'open'
+    outcome:     'pending', // manual override: 'win', 'loss', 'skip'
+    notes:       ''
+  };
+  tradeLog.unshift(entry); // newest first
+  localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
+  renderTradeLog();
+  updateLogBadge();
+}
+
+// ── AUTO OUTCOME CHECKER ──
+// 24 hours after a trade is logged, fetch 30min klines and check
+// if price reached TP or SL first. Marks outcome automatically.
+async function checkTradeOutcome(trade) {
+  if (!trade.tpLevel && !trade.slLevel) return; // nothing to check
+  if (trade.autoOutcome && trade.autoOutcome !== 'open') return; // already resolved
+
+  try {
+    // Fetch 30min candles from entry time onwards
+    const since = trade.loggedAt || Date.now() - (24 * 60 * 60 * 1000);
+    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${trade.symbol}&interval=30m&limit=50`);
+    const raw = await safeJson(r);
+    if (!Array.isArray(raw)) return;
+
+    const candles = raw
+      .filter(k => k[0] >= since)
+      .map(k => ({ high: parseFloat(k[2]), low: parseFloat(k[3]) }));
+
+    if (!candles.length) return;
+
+    const isBull = trade.direction === 'bull';
+    let tpHit = false, slHit = false, tpTime = Infinity, slTime = Infinity;
+
+    // Walk through candles in order to find which was hit FIRST
+    for (let i = 0; i < candles.length; i++) {
+      const c = candles[i];
+      if (!tpHit && trade.tpLevel) {
+        if (isBull && c.high >= trade.tpLevel)  { tpHit = true; tpTime = i; }
+        if (!isBull && c.low <= trade.tpLevel)  { tpHit = true; tpTime = i; }
+      }
+      if (!slHit && trade.slLevel) {
+        if (isBull && c.low <= trade.slLevel)   { slHit = true; slTime = i; }
+        if (!isBull && c.high >= trade.slLevel) { slHit = true; slTime = i; }
+      }
+      if (tpHit && slHit) break;
+    }
+
+    // Determine outcome based on which was hit first
+    let autoOutcome = 'open';
+    if (tpHit && slHit) {
+      autoOutcome = tpTime <= slTime ? 'win' : 'loss';
+    } else if (tpHit) {
+      autoOutcome = 'win';
+    } else if (slHit) {
+      autoOutcome = 'loss';
+    }
+
+    trade.autoOutcome = autoOutcome;
+    localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
+    renderTradeLog();
+
+  } catch(e) {
+    console.log('Auto outcome check error:', e);
+  }
+}
+
+// Run auto outcome checks on all pending trades
+async function runAutoOutcomeChecks() {
+  const pending = tradeLog.filter(t =>
+    (!t.autoOutcome || t.autoOutcome === 'open') &&
+    t.loggedAt && (Date.now() - t.loggedAt) >= (2 * 60 * 60 * 1000) // at least 2hrs old
+  );
+  for (const trade of pending) {
+    await checkTradeOutcome(trade);
+    await new Promise(r => setTimeout(r, 200)); // rate limit friendly
+  }
+}
+
+// Set outcome for a trade
+function setOutcome(id, outcome) {
+  const trade = tradeLog.find(t => t.id === id);
+  if (!trade) return;
+  trade.outcome = trade.outcome === outcome ? 'pending' : outcome; // toggle
+  localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
+  renderTradeLog();
+}
+
+// Save notes for a trade
+function saveNote(id, note) {
+  const trade = tradeLog.find(t => t.id === id);
+  if (!trade) return;
+  trade.notes = note;
+  localStorage.setItem('orchem_trade_log', JSON.stringify(tradeLog));
+}
+
+// Clear all logs
+function clearLog() {
+  if (!confirm('Clear all trade history? This cannot be undone.')) return;
+  tradeLog = [];
+  localStorage.removeItem('orchem_trade_log');
+  renderTradeLog();
+  updateLogBadge();
+}
+
+// Export to CSV
+function exportLog() {
+  if (!tradeLog.length) { toast('No trades to export', 'neutral'); return; }
+  const headers = ['Date','Symbol','Direction','Signal','Entry Price','TP Level','TP %','SL Level','SL %','Trailing %','Signal Age','Confirm Time','Outcome','Notes'];
+  const rows = tradeLog.map(t => [
+    t.date, t.symbol, t.direction === 'bull' ? 'LONG' : 'SHORT',
+    t.signal1d, t.entryPrice, t.tpLevel || '', t.tpGain || '',
+    t.slLevel || '', t.slRisk || '', t.trailingPct || '',
+    t.signalAge, t.confirmTime, t.outcome, `"${(t.notes||'').replace(/"/g,'""')}"`
+  ]);
+  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `orchem-trade-log-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Update log badge count
+function updateLogBadge() {
+  const badge = document.getElementById('log-badge');
+  if (badge) {
+    badge.textContent = tradeLog.length;
+    badge.style.background = tradeLog.length ? 'var(--accent)' : 'var(--muted)';
+  }
+}
+
+// Render trade log table
+function renderTradeLog() {
+  const tbody = document.getElementById('log-body');
+  if (!tbody) return;
+
+  // Update stats — bot accuracy (automated) + your accuracy (manual)
+  const autoSettled  = tradeLog.filter(t => t.autoOutcome === 'win' || t.autoOutcome === 'loss');
+  const autoWins     = tradeLog.filter(t => t.autoOutcome === 'win');
+  const autoLosses   = tradeLog.filter(t => t.autoOutcome === 'loss');
+  const autoWinRate  = autoSettled.length ? Math.round(autoWins.length / autoSettled.length * 100) : null;
+
+  const yourSettled  = tradeLog.filter(t => t.outcome === 'win' || t.outcome === 'loss');
+  const yourWins     = tradeLog.filter(t => t.outcome === 'win');
+  const yourWinRate  = yourSettled.length ? Math.round(yourWins.length / yourSettled.length * 100) : null;
+
+  document.getElementById('log-total').textContent        = tradeLog.length;
+  document.getElementById('log-auto-wins').textContent    = autoWins.length;
+  document.getElementById('log-auto-losses').textContent  = autoLosses.length;
+  document.getElementById('log-auto-winrate').textContent = autoWinRate !== null ? autoWinRate + '%' : '—';
+  document.getElementById('log-wins').textContent         = yourWins.length;
+  document.getElementById('log-winrate').textContent      = yourWinRate !== null ? yourWinRate + '%' : '—';
+
+  if (!tradeLog.length) {
+    tbody.innerHTML = '<tr><td colspan="11"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = tradeLog.map(t => {
+    const isBull   = t.direction === 'bull';
+    const dirColor = isBull ? 'var(--bull)' : 'var(--bear)';
+    const dirLabel = isBull ? '▲ LONG' : '▼ SHORT';
+    const outcomeClass = t.outcome === 'win' ? 'win' : t.outcome === 'loss' ? 'loss' : t.outcome === 'skip' ? 'skip' : '';
+
+    return `<tr>
+      <td style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${t.date}</td>
+      <td style="font-family:var(--mono);font-weight:700;color:var(--bright)">${t.symbol.replace('USDT','')}/USDT</td>
+      <td style="font-family:var(--mono);font-weight:700;color:${dirColor};font-size:.76rem">${dirLabel}</td>
+      <td style="font-size:.74rem;color:var(--text)">${t.signal1d}</td>
+      <td style="font-family:var(--mono)">$${fmt(t.entryPrice)}</td>
+      <td style="font-family:var(--mono);color:var(--warn)">${t.tpLevel ? '$'+fmt(t.tpLevel)+' (+'+t.tpGain+'%)' : '—'}</td>
+      <td style="font-family:var(--mono);color:var(--bear)">${t.slLevel ? '$'+fmt(t.slLevel)+' (-'+t.slRisk+'%)' : '—'}</td>
+      <td style="font-family:var(--mono);color:#a78bfa">${t.trailingPct ? t.trailingPct+'%' : '—'}</td>
+      <td style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${t.signalAge}</td>
+      <td>
+        <span style="font-family:var(--mono);font-size:.76rem;font-weight:700;color:${
+          t.autoOutcome==='win' ? 'var(--bull)' :
+          t.autoOutcome==='loss' ? 'var(--bear)' : 'var(--muted)'}">
+          ${t.autoOutcome==='win' ? '✅ WIN' : t.autoOutcome==='loss' ? '❌ LOSS' : '⏳ OPEN'}
+        </span>
+      </td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          <button class="outcome-btn ${t.outcome==='win'?'win':''}" onclick="setOutcome(${t.id},'win')">✅</button>
+          <button class="outcome-btn ${t.outcome==='loss'?'loss':''}" onclick="setOutcome(${t.id},'loss')">❌</button>
+          <button class="outcome-btn ${t.outcome==='skip'?'skip':''}" onclick="setOutcome(${t.id},'skip')">⏭</button>
+        </div>
+      </td>
+      <td><input type="text" value="${t.notes||''}" placeholder="Add note..." 
+          onchange="saveNote(${t.id},this.value)"
+          style="background:transparent;border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:.74rem;width:140px;outline:none;">
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderActive() {
+  if (activeTab === 'engulf') renderEngulf();
+  else if (activeTab === 'aux') renderAux();
+  else if (activeTab === 'confirm') renderConfirm();
+  else if (activeTab === 'tradelog') renderTradeLog();
+}
+
+/* ═══════════════════════════════════════
+   RENDER — 30MIN CONFIRMATION TAB
+═══════════════════════════════════════ */
+function renderConfirm() {
+  const grid = document.getElementById('confirm-grid');
+  if (!confirmResults.length) {
+    grid.innerHTML = '<div class="no-watch">📡 Run a 1D scan first — flagged pairs will appear here for 30min confirmation</div>';
+    return;
+  }
+
+  // Sort: confirmed first, then unconfirmed
+  const sorted = [...confirmResults].sort((a,b) => b.confirmed - a.confirmed);
+
+  grid.innerHTML = sorted.map(r => {
+    const isBull   = r.direction === 'bull';
+    const dirColor = isBull ? 'var(--bull)' : 'var(--bear)';
+    const dirLabel = isBull ? '▲ LONG' : '▼ SHORT';
+
+    const statusHtml = r.confirmed
+      ? `<div class="confirm-status status-confirmed">✅ ENTRY CONFIRMED</div>`
+      : `<div class="confirm-status status-unconfirmed"><span class="pulse-dot"></span> ENTRY UNCONFIRMED</div>`;
+
+    // Check if TP already reached
+    const currentPrice = r.signal2h ? r.signal2h.closePrice : r.entryPrice;
+    // tpReached: only valid if TP is in the correct direction from entry
+    const tpDirectionValid = r.tpLevel && r.entryPrice && (
+      (isBull && r.tpLevel > r.entryPrice) ||
+      (!isBull && r.tpLevel < r.entryPrice)
+    );
+    const tpReached = tpDirectionValid && currentPrice && (
+      (isBull && currentPrice >= r.tpLevel) ||
+      (!isBull && currentPrice <= r.tpLevel)
+    );
+
+    const signal2hHtml = r.confirmed && r.signal2h
+      ? `<span class="confirm-2h-badge ${r.signal2h.direction === 'bear' ? 'bear' : ''}">${r.signal2h.label}</span>
+         <span style="font-family:var(--mono);font-size:.75rem;color:var(--text)"> entry at <strong>$${fmt(r.signal2h.closePrice)}</strong></span>
+         <span style="font-family:var(--mono);font-size:.72rem;color:var(--muted)"> · confirmed ${r.signal2h.dateStr}</span>`
+      : `Watching 30min candles for breakout confirmation…`;
+
+    // Signal age
+    const age = r.detectedAt ? getSignalAge(r.detectedAt) : null;
+    const ageHtml = age
+      ? `<div class="confirm-detail" style="margin-top:4px">
+           ⏱ <span style="color:${age.color};font-family:var(--mono);font-weight:700">${age.label}</span>
+           <span style="color:var(--muted);font-size:.7rem"> — signal is ${age.hours} hours old</span>
+           ${parseFloat(age.hours) > 16 ? '<span style="color:var(--bear);font-size:.68rem"> ⚠️ Consider skipping — move may be over</span>' : ''}
+         </div>`
+      : '';
+
+    const tpHtml = r.tpLevel
+      ? tpReached
+        ? `<div class="confirm-detail" style="margin-top:5px">
+             ⚠️ <span style="color:var(--bear);font-family:var(--mono);font-weight:700">TP Already Reached!</span>
+             <span style="color:var(--muted);font-size:.7rem"> Target was $${fmt(r.tpLevel)} — do not enter now</span>
+           </div>`
+        : `<div class="confirm-detail" style="margin-top:5px">
+             🎯 <span style="color:var(--warn);font-family:var(--mono);font-weight:700">TP Target: $${fmt(r.tpLevel)}</span>
+             <span style="color:var(--muted);font-size:.7rem"> (+${r.tpGain}% potential)</span>
+             ${r.slLevel ? `<br>🛑 <span style="color:var(--bear);font-family:var(--mono);font-weight:700">Stop Loss: $${fmt(r.slLevel)}</span><span style="color:var(--muted);font-size:.7rem"> (-${r.slRisk}% risk)</span>` : ''}
+             ${r.trailingPct ? `<br>📌 <span style="color:#a78bfa;font-family:var(--mono);font-weight:700">Trailing Stop: ${r.trailingPct}%</span><span style="color:var(--muted);font-size:.7rem"> (set on Bybit after entry)</span>` : ''}
+           </div>`
+      : '';
+
+    return `<div class="confirm-card ${r.confirmed ? (tpReached ? 'tp-reached' : 'confirmed') : 'unconfirmed'}">
+      <div>
+        <div class="confirm-top">
+          <span class="confirm-sym">${r.symbol.replace('USDT','')}/USDT</span>
+          <span class="confirm-1d" style="color:${dirColor}">${dirLabel}</span>
+          <span class="confirm-1d">${r.signal1d || ''}</span>
+        </div>
+        <div class="confirm-detail" style="margin-top:6px">${signal2hHtml}</div>
+        ${ageHtml}
+        ${tpHtml}
+      </div>
+      ${tpReached
+        ? `<div class="confirm-status" style="background:rgba(255,69,96,.1);color:var(--bear);border:1px solid rgba(255,69,96,.3)">⚠️ TP REACHED</div>`
+        : statusHtml}
+    </div>`;
+  }).join('');
+}
+
+function updateConfirmBadge() {
+  const confirmed = confirmResults.filter(r => r.confirmed).length;
+  const badge = document.getElementById('confirm-badge');
+  if (confirmed > 0) {
+    badge.textContent = confirmed;
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+/* ═══════════════════════════════════════
+   STATS
+═══════════════════════════════════════ */
+function updateStats(total) {
+  const auxBreakouts = auxResults.filter(r=>r.direction!==null);
+  document.getElementById('stat-scanned').textContent = total ?? '—';
+  document.getElementById('stat-total').textContent   = engulfResults.length + auxBreakouts.length;
+  document.getElementById('stat-ebull').textContent   = engulfResults.filter(r=>r.direction==='bull').length;
+  document.getElementById('stat-ebear').textContent   = engulfResults.filter(r=>r.direction==='bear').length;
+  document.getElementById('stat-abull').textContent   = auxBreakouts.filter(r=>r.direction==='bull').length;
+  document.getElementById('stat-abear').textContent   = auxBreakouts.filter(r=>r.direction==='bear').length;
+}
+
+/* ═══════════════════════════════════════
+   TABS / FILTERS / SORT
+═══════════════════════════════════════ */
+function switchTab(tab, el) {
+  activeTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('filters-engulf').style.display = tab==='engulf'  ? 'flex' : 'none';
+  document.getElementById('filters-aux').style.display    = tab==='aux'     ? 'flex' : 'none';
+  document.getElementById('thead-engulf').style.display   = tab==='engulf'  ? ''     : 'none';
+  document.getElementById('thead-aux').style.display      = tab==='aux'     ? ''     : 'none';
+  document.getElementById('confirm-panel').style.display    = tab==='confirm'   ? 'block': 'none';
+  document.getElementById('tradelog-panel').style.display   = tab==='tradelog'  ? 'block': 'none';
+  document.querySelector('.results-section').style.display  = (tab==='confirm' || tab==='tradelog') ? 'none' : 'block';
+  if (tab === 'tradelog') renderTradeLog();
+  document.getElementById('section-label').textContent    =
+    tab==='engulf' ? 'ENGULFING SETUPS' : tab==='aux' ? 'AUXILIARY BREAKOUTS' : '';
+  renderActive();
+}
+
+function setFilter(f, el) {
+  activeFilter = f;
+  document.querySelectorAll('#filters-engulf .filter-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  renderEngulf();
+}
+
+function setFilterAux(f, el) {
+  activeFilterAux = f;
+  document.querySelectorAll('#filters-aux .filter-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  renderAux();
+}
+
+function sortBy(key) {
+  if (sortKey===key) sortDir*=-1; else { sortKey=key; sortDir=1; }
+  renderEngulf();
+}
+
+function sortByAux(key) {
+  if (sortKeyAux===key) sortDirAux*=-1; else { sortKeyAux=key; sortDirAux=-1; }
+  renderAux();
+}
+
+/* ═══════════════════════════════════════
+   AUTO SCAN
+═══════════════════════════════════════ */
+function toggleAuto() {
+  const btn = document.getElementById('auto-btn');
+  if (autoTimer) {
+    clearInterval(autoTimer); autoTimer = null;
+    btn.textContent = 'AUTO-SCAN OFF'; btn.classList.remove('active');
+    toast('Auto-scan disabled', 'neutral');
+  } else {
+    autoTimer = setInterval(startScan, AUTO_INTERVAL_MS);
+    btn.textContent = 'AUTO-SCAN ON (1hr)'; btn.classList.add('active');
+    toast('Auto-scan enabled — runs every 1 hour', 'neutral');
+    startScan();
+  }
+}
+
+/* ═══════════════════════════════════════
+   NOTIFICATIONS
+═══════════════════════════════════════ */
+async function requestNotifications() {
+  if (!('Notification' in window)) { toast('Notifications not supported in this browser', 'neutral'); return; }
+  const perm = await Notification.requestPermission();
+  notifGranted = perm === 'granted';
+  const btn = document.getElementById('notif-btn');
+  if (notifGranted) {
+    btn.textContent = '🔔 ALERTS ON';
+    btn.style.cssText += 'color:var(--bull);border-color:var(--bull);';
+    toast('Browser alerts enabled!', 'bull');
+  } else {
+    toast('Permission denied — enable in browser settings', 'neutral');
+  }
+}
+
+function notifyNew() {
+  const allNew = [...engulfResults, ...auxResults];
+  if (!allNew.length) { toast('Scan complete — no setups found this cycle', 'neutral'); return; }
+
+  // In-page toasts (first 6)
+  engulfResults.slice(0,3).forEach(r => {
+    toast(`<span class="toast-sym">${r.symbol}</span><div class="toast-body">${r.label} · ${r.direction==='bull'?'▲ LONG':'▼ SHORT'} · ${r.proximity.toFixed(1)}% from S/R</div>`, r.direction);
+  });
+  auxResults.slice(0,3).forEach(r => {
+    toast(`<span class="toast-sym">${r.symbol}</span><div class="toast-body">${r.signal} · Range: $${fmt(r.rangeLow)} – $${fmt(r.rangeHigh)}</div>`, r.direction==='bull'?'bull':'bear');
+  });
+  if (allNew.length > 6) toast(`…and ${allNew.length - 6} more setups found`, 'neutral');
+
+  // Browser push
+  if (notifGranted) {
+    new Notification(`Orchem Bot: ${allNew.length} setups found`, {
+      body: `${engulfResults.length} engulfing · ${auxResults.length} breakouts on 1D`,
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><text y="26" font-size="28">📡</text></svg>'
+    });
+  }
+
+  // ── TELEGRAM: Send 1D scan summary (NEW pairs only) ──
+  const newPairs = allNew.filter(r => !tgAlertedPairs.has(r.symbol));
+
+  if (newPairs.length > 0) {
+    // Mark these pairs as alerted
+    newPairs.forEach(r => tgAlertedPairs.add(r.symbol));
+
+    const newEngulfBull = newPairs.filter(r=>r.direction==='bull' && engulfResults.find(e=>e.symbol===r.symbol));
+    const newEngulfBear = newPairs.filter(r=>r.direction==='bear' && engulfResults.find(e=>e.symbol===r.symbol));
+    const newAuxBull    = newPairs.filter(r=>r.direction==='bull' && auxResults.find(a=>a.symbol===r.symbol));
+    const newAuxBear    = newPairs.filter(r=>r.direction==='bear' && auxResults.find(a=>a.symbol===r.symbol));
+
+    let tgSummary = `📡 <b>ORCHEM BOT — NEW SIGNALS</b>\n`
+      + `${newPairs.length} new setups found\n\n`;
+
+    if (newEngulfBull.length) tgSummary += `🟢 Bull Engulfing: ${newEngulfBull.map(r=>r.symbol.replace('USDT','')).join(', ')}\n`;
+    if (newEngulfBear.length) tgSummary += `🔴 Bear Engulfing: ${newEngulfBear.map(r=>r.symbol.replace('USDT','')).join(', ')}\n`;
+    if (newAuxBull.length)    tgSummary += `🟢 Aux Bull Breakout: ${newAuxBull.map(r=>r.symbol.replace('USDT','')).join(', ')}\n`;
+    if (newAuxBear.length)    tgSummary += `🔴 Aux Bear Breakout: ${newAuxBear.map(r=>r.symbol.replace('USDT','')).join(', ')}\n`;
+
+    tgSummary += `\n⏳ Watching for 30min confirmations...`;
+    sendTelegram(tgSummary);
+  }
+
+  // Reset alerted pairs at midnight UTC (daily candle close)
+  const now = new Date();
+  if (now.getUTCHours() === 0 && now.getUTCMinutes() < 60) {
+    tgAlertedPairs.clear();
+  }
+}
+
+function toast(html, type='neutral') {
+  const tc = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = html;
+  tc.appendChild(el);
+  setTimeout(() => el.remove(), 5500);
+}
+
+// ── TELEGRAM NOTIFICATION ──
+async function sendTelegram(message) {
+  try {
+    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TG_CHAT_ID,
+        text: message,
+        parse_mode: 'HTML'
+      })
+    });
+  } catch(e) {
+    console.log('Telegram error:', e);
+  }
+}
+
+function setStatus(text, live) {
+  document.getElementById('status-text').textContent = text;
+  document.getElementById('status-dot').className = 'dot' + (live ? ' live' : '');
+}
+
+// Initialize on page load
+window.addEventListener('load', () => {
+  updateLogBadge();
+  renderTradeLog();
+  // Check any pending trade outcomes on load
+  setTimeout(runAutoOutcomeChecks, 3000);
+});
+
+function showProgress(on) {
+  document.getElementById('progress-wrap').classList.toggle('visible', on);
+  if (!on) { document.getElementById('progress-bar').style.width='0%'; }
+}
+</script>
+</body>
+</html>
