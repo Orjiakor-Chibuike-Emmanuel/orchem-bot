@@ -1,0 +1,7 @@
+{
+  "name": "orchem-bot-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Server-side scanner for Orchem Bot — runs on a schedule via GitHub Actions, independent of any browser tab.",
+  "engines": { "node": ">=18" }
+}
