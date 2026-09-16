@@ -21,7 +21,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
-<title>Orchem Bot v8 (MA50+Extreme+30min) — Pattern Scanner</title>
+<title>Orchem Bot v9 — Pattern Scanner</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
@@ -276,7 +276,7 @@ if ('serviceWorker' in navigator) {
 <header>
   <div class="wrap">
     <div class="header-inner">
-      <div class="logo">ORCHEM <span>BOT</span></div>
+      <div class="logo">ORCHEM <span>BOT</span> <span style="font-size:.6rem;color:var(--muted);letter-spacing:.05em">v9</span></div>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
         <span id="last-scan">Never scanned</span>
         <div class="status-pill">
@@ -1139,10 +1139,17 @@ async function run2HConfirmation() {
           (item.direction === 'bull' && confirmSlLevel < entryPrice) ||
           (item.direction === 'bear' && confirmSlLevel > entryPrice)
         );
-        item.tpLevel = tpValid ? confirmTpLevel : null;
-        item.tpGain  = tpValid ? confirmTpGain  : null;
-        item.slLevel = slValid ? confirmSlLevel : null;
-        item.slRisk  = slValid ? confirmSlRisk  : null;
+        // Use recalculated levels if valid, otherwise fall back to original 1D levels
+        if (tpValid) {
+          item.tpLevel = confirmTpLevel;
+          item.tpGain  = confirmTpGain;
+        }
+        // Keep original tpLevel if recalculation failed — better than showing nothing
+        if (slValid) {
+          item.slLevel = confirmSlLevel;
+          item.slRisk  = confirmSlRisk;
+        }
+        // Keep original slLevel if recalculation failed
 
         // ── AUTO-LOG THE TRADE ──
         logTrade(item, result2h);
@@ -1912,8 +1919,9 @@ function toast(html, type='neutral') {
 // ── TELEGRAM NOTIFICATION ──
 // Sends to all registered chat IDs (personal + groups)
 const TG_RECIPIENTS = [
-  '1742837981',    // Nuel personal
-  '-5497914355',   // Orchem group
+  '1742837981',      // Nuel personal
+  '-5497914355',     // Orchem group (original ID)
+  '-1005497914355',  // Orchem group (supergroup format)
 ];
 
 async function sendTelegram(message) {
