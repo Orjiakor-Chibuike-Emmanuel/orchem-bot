@@ -21,7 +21,7 @@ const STATE_PATH = new URL('./state.json', import.meta.url);
 const SR_PROXIMITY_PCT = 5;
 const SWING_LOOKBACK   = 60;
 const BOUNDARY_LOOKBACK = 50;
-const EXCHANGE          = 'https://api.bybit.com'; // Bybit v5 — Binance futures API blocks GitHub's US-hosted runners (HTTP 451)
+// Bybit host list + request headers are defined near apiFetch() below
 
 const MA_PERIOD      = 50;
 const VOL_LOOKBACK    = 20;
@@ -63,13 +63,25 @@ async function saveState(state) {
 }
 
 /* ── BYBIT HELPERS (no CORS proxy needed server-side) ── */
-async function apiFetch(url) {
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(9000) });
-    if (r.ok) return r;
-    console.log('Bybit non-OK status', r.status, url);
-  } catch (e) {
-    console.log('Bybit fetch failed:', e.message, url);
+// Two things GitHub Actions runners commonly trip on with Cloudflare-fronted
+// APIs: (1) no browser-like headers, (2) a single host with no fallback if
+// that host's IP reputation is flagged. Address both: send realistic
+// headers, and try a second Bybit domain if the first is blocked.
+const BYBIT_HOSTS = ['https://api.bybit.com', 'https://api.bytick.com'];
+const REQUEST_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'application/json'
+};
+
+async function apiFetch(path) {
+  for (const host of BYBIT_HOSTS) {
+    try {
+      const r = await fetch(host + path, { headers: REQUEST_HEADERS, signal: AbortSignal.timeout(9000) });
+      if (r.ok) return r;
+      console.log('Bybit non-OK status', r.status, host + path);
+    } catch (e) {
+      console.log('Bybit fetch failed:', e.message, host + path);
+    }
   }
   return null;
 }
@@ -78,7 +90,7 @@ async function safeJson(r) {
   try { return await r.json(); } catch (_) { return null; }
 }
 async function fetchSymbols() {
-  const r = await apiFetch(`${EXCHANGE}/v5/market/instruments-info?category=linear`);
+  const r = await apiFetch(`/v5/market/instruments-info?category=linear`);
   const d = await safeJson(r);
   if (!d || d.retCode !== 0 || !d.result || !Array.isArray(d.result.list)) {
     throw new Error('Could not reach Bybit instruments-info API.');
@@ -103,13 +115,13 @@ function parseBybitKlines(raw) {
     }));
 }
 async function fetchKlines(symbol, limit = SWING_LOOKBACK) {
-  const r = await apiFetch(`${EXCHANGE}/v5/market/kline?category=linear&symbol=${symbol}&interval=D&limit=${limit}`);
+  const r = await apiFetch(`/v5/market/kline?category=linear&symbol=${symbol}&interval=D&limit=${limit}`);
   const d = await safeJson(r);
   if (!d || d.retCode !== 0) return null;
   return parseBybitKlines(d.result);
 }
 async function fetch2HKlines(symbol, sinceTimestamp) {
-  const r = await apiFetch(`${EXCHANGE}/v5/market/kline?category=linear&symbol=${symbol}&interval=30&limit=100`);
+  const r = await apiFetch(`/v5/market/kline?category=linear&symbol=${symbol}&interval=30&limit=100`);
   const d = await safeJson(r);
   if (!d || d.retCode !== 0) return null;
   const all = parseBybitKlines(d.result);
@@ -118,7 +130,7 @@ async function fetch2HKlines(symbol, sinceTimestamp) {
 }
 async function calcSuggestedTrailing(symbol) {
   try {
-    const r = await apiFetch(`${EXCHANGE}/v5/market/kline?category=linear&symbol=${symbol}&interval=30&limit=20`);
+    const r = await apiFetch(`/v5/market/kline?category=linear&symbol=${symbol}&interval=30&limit=20`);
     const d = await safeJson(r);
     if (!d || d.retCode !== 0 || !d.result || !Array.isArray(d.result.list) || d.result.list.length < 5) return null;
     const ranges = d.result.list.map(k => {
