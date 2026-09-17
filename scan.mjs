@@ -21,7 +21,7 @@ const STATE_PATH = new URL('./state.json', import.meta.url);
 const SR_PROXIMITY_PCT = 5;
 const SWING_LOOKBACK   = 60;
 const BOUNDARY_LOOKBACK = 50;
-const BINANCE          = 'https://fapi.binance.com';
+const EXCHANGE          = 'https://api.bybit.com'; // Bybit v5 — Binance futures API blocks GitHub's US-hosted runners (HTTP 451)
 
 const MA_PERIOD      = 50;
 const VOL_LOOKBACK    = 20;
@@ -62,14 +62,14 @@ async function saveState(state) {
   await writeFile(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
-/* ── BINANCE HELPERS (no CORS proxy needed server-side) ── */
+/* ── BYBIT HELPERS (no CORS proxy needed server-side) ── */
 async function apiFetch(url) {
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(9000) });
     if (r.ok) return r;
-    console.log('Binance non-OK status', r.status, url);
+    console.log('Bybit non-OK status', r.status, url);
   } catch (e) {
-    console.log('Binance fetch failed:', e.message, url);
+    console.log('Bybit fetch failed:', e.message, url);
   }
   return null;
 }
@@ -78,40 +78,50 @@ async function safeJson(r) {
   try { return await r.json(); } catch (_) { return null; }
 }
 async function fetchSymbols() {
-  const r = await apiFetch(`${BINANCE}/fapi/v1/exchangeInfo`);
+  const r = await apiFetch(`${EXCHANGE}/v5/market/instruments-info?category=linear`);
   const d = await safeJson(r);
-  if (!d || !Array.isArray(d.symbols)) throw new Error('Could not reach Binance exchangeInfo API.');
-  return d.symbols
-    .filter(s => s.quoteAsset === 'USDT' && s.status === 'TRADING' && s.contractType === 'PERPETUAL')
+  if (!d || d.retCode !== 0 || !d.result || !Array.isArray(d.result.list)) {
+    throw new Error('Could not reach Bybit instruments-info API.');
+  }
+  return d.result.list
+    .filter(s => s.quoteCoin === 'USDT' && s.status === 'Trading' && s.contractType === 'LinearPerpetual')
     .map(s => s.symbol);
 }
+// Bybit returns klines NEWEST-first — reverse to ascending chronological
+// order so the rest of the logic (which assumes the last candle is the
+// most recent/still-forming one, same as Binance's native order) works
+// unchanged.
+function parseBybitKlines(raw) {
+  if (!raw || !Array.isArray(raw.list)) return null;
+  return raw.list
+    .slice()
+    .reverse()
+    .map(k => ({
+      time: parseInt(k[0], 10), open: parseFloat(k[1]), high: parseFloat(k[2]),
+      low: parseFloat(k[3]), close: parseFloat(k[4]), volume: parseFloat(k[5]),
+      isBullish: parseFloat(k[4]) >= parseFloat(k[1])
+    }));
+}
 async function fetchKlines(symbol, limit = SWING_LOOKBACK) {
-  const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=${limit}`);
-  const raw = await safeJson(r);
-  if (!Array.isArray(raw)) return null;
-  return raw.map(k => ({
-    time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]),
-    low: parseFloat(k[3]), close: parseFloat(k[4]), volume: parseFloat(k[5]),
-    isBullish: parseFloat(k[4]) >= parseFloat(k[1])
-  }));
+  const r = await apiFetch(`${EXCHANGE}/v5/market/kline?category=linear&symbol=${symbol}&interval=D&limit=${limit}`);
+  const d = await safeJson(r);
+  if (!d || d.retCode !== 0) return null;
+  return parseBybitKlines(d.result);
 }
 async function fetch2HKlines(symbol, sinceTimestamp) {
-  const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=100`);
-  const raw = await safeJson(r);
-  if (!Array.isArray(raw)) return null;
-  const all = raw.map(k => ({
-    time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]),
-    low: parseFloat(k[3]), close: parseFloat(k[4]),
-    isBullish: parseFloat(k[4]) >= parseFloat(k[1])
-  }));
+  const r = await apiFetch(`${EXCHANGE}/v5/market/kline?category=linear&symbol=${symbol}&interval=30&limit=100`);
+  const d = await safeJson(r);
+  if (!d || d.retCode !== 0) return null;
+  const all = parseBybitKlines(d.result);
+  if (!all) return null;
   return all.filter(c => c.time >= sinceTimestamp);
 }
 async function calcSuggestedTrailing(symbol) {
   try {
-    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=20`);
-    const raw = await safeJson(r);
-    if (!Array.isArray(raw) || raw.length < 5) return null;
-    const ranges = raw.map(k => {
+    const r = await apiFetch(`${EXCHANGE}/v5/market/kline?category=linear&symbol=${symbol}&interval=30&limit=20`);
+    const d = await safeJson(r);
+    if (!d || d.retCode !== 0 || !d.result || !Array.isArray(d.result.list) || d.result.list.length < 5) return null;
+    const ranges = d.result.list.map(k => {
       const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]);
       return ((high - low) / close) * 100;
     });
