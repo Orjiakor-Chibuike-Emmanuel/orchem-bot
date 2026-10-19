@@ -308,10 +308,14 @@ async function run2HConfirmation() {
         }
 
         // The watchlist's entryPrice was only ever the 1D signal's close —
-        // a placeholder from before confirmation. Once confirmed, the real
-        // entry is this 30min candle's close. Overwriting it here is what
-        // makes the dashboard (and the trade log) show the actual entry
-        // instead of a stale earlier price.
+        // a placeholder from before confirmation. confirmationPrice is the
+        // fixed, never-overwritten record of what the 30min candle closed
+        // at — the number everything (SL/TP sizing, "did we get a good
+        // fill") was originally planned against. entryPrice starts the
+        // same but gets replaced below with the REAL Bybit fill once one
+        // exists, so the two can be shown side by side: what we planned
+        // for vs. what actually happened.
+        item.confirmationPrice = entryPrice;
         item.entryPrice = entryPrice;
         item.confirmedAt = result2h.confirmTime + (30 * 60 * 1000); // candle CLOSE time, not open
 
@@ -384,7 +388,10 @@ async function run2HConfirmation() {
           + `<b>${item.symbol.replace('USDT', '')}/USDT</b> · ${dir}\n`
           + `Signal: ${item.signal1d}\n`
           + `Confirmation: ${result2h.label}\n`
-          + `Entry: $${fmt(item.entryPrice)} · ${result2h.dateStr}`
+          + `Confirmation Price: $${fmt(item.confirmationPrice)} · ${result2h.dateStr}`
+          + (bybitResult.placed && item.entryPrice !== item.confirmationPrice
+              ? `\nEntry (actual fill): $${fmt(item.entryPrice)}`
+              : '')
           + tpText + slText + sizeText + trailingText + bybitText;
         await sendTelegram(tgMsg);
       }

@@ -184,12 +184,18 @@ function renderLog(tradeLog) {
     const sourceTag = t.outcomeSource === 'bybit' ? ' <span class="outcome-src real">✓bybit</span>'
       : t.outcomeSource === 'candle-estimate' ? ' <span class="outcome-src est">est.</span>' : '';
     const pnlNote = t.actualPnl != null ? ` · ${t.actualPnl >= 0 ? '+' : ''}$${t.actualPnl.toFixed(2)}` : '';
+    // Show both prices only when they actually differ (a real Bybit fill
+    // away from the confirmation-candle estimate) — otherwise one number
+    // is enough and a second identical one is just noise.
+    const fillNote = (t.entryPrice && t.confirmationPrice && t.entryPrice !== t.confirmationPrice)
+      ? ` · conf $${fmt(t.confirmationPrice)} → fill $${fmt(t.entryPrice)}`
+      : t.confirmationPrice ? ` · $${fmt(t.confirmationPrice)}` : '';
     return `<div class="log-row">
       <span class="log-time">${t.date}</span>
       <span class="log-sym">${t.symbol.replace('USDT', '')}</span>
       <span class="log-dir ${isBull ? 'long' : 'short'}">${isBull ? 'L' : 'S'}</span>
       <span class="log-status ${t.entryStatus}">${t.entryStatus.toUpperCase()}</span>
-      <span class="log-note">${t.signal1d || ''}${t.notes ? ' · ' + t.notes : ''}${pnlNote}</span>
+      <span class="log-note">${t.signal1d || ''}${t.notes ? ' · ' + t.notes : ''}${fillNote}${pnlNote}</span>
       ${showButtons ? `<span class="log-outcome">
         <button class="out-btn ${outcome === 'win' ? 'active win' : ''}" onclick="setOutcome(${t.id},'win')">WIN</button>
         <button class="out-btn ${outcome === 'loss' ? 'active loss' : ''}" onclick="setOutcome(${t.id},'loss')">LOSS</button>${sourceTag}

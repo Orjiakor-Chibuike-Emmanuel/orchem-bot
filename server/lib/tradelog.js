@@ -23,7 +23,12 @@ function logTrade(item, result2h, entryStatus = 'confirmed') {
     direction: item.direction,
     signal1d: item.signal1d || '—',
     entryStatus,
-    entryPrice: result2h ? result2h.closePrice : item.entryPrice,
+    // confirmationPrice is the 30min candle close everything was planned
+    // against — fixed, never overwritten. entryPrice is the real Bybit
+    // fill when the trade actually executed (falls back to the same
+    // confirmation price when it didn't, e.g. auto-trading was off).
+    confirmationPrice: item.confirmationPrice || (result2h ? result2h.closePrice : item.entryPrice),
+    entryPrice: item.entryPrice || (result2h ? result2h.closePrice : null),
     tpLevel: item.tpLevel,
     tpGain: item.tpGain,
     slLevel: item.slLevel,
@@ -191,10 +196,10 @@ function clearLog() {
 
 function exportCsv() {
   const tradeLog = stateMod.tradeLog;
-  const headers = ['Date', 'Status', 'Symbol', 'Direction', 'Signal', 'Entry Price', 'TP Level', 'TP %', 'SL Level', 'SL %', 'Size (qty)', 'Size (notional $)', 'Leverage (x)', 'Trailing %', 'Signal Age', 'Confirm Time', 'Outcome', 'Outcome Source', 'Actual Exit', 'Actual PnL ($)', 'Notes'];
+  const headers = ['Date', 'Status', 'Symbol', 'Direction', 'Signal', 'Confirmation Price', 'Entry Price (fill)', 'TP Level', 'TP %', 'SL Level', 'SL %', 'Size (qty)', 'Size (notional $)', 'Leverage (x)', 'Trailing %', 'Signal Age', 'Confirm Time', 'Outcome', 'Outcome Source', 'Actual Exit', 'Actual PnL ($)', 'Notes'];
   const rows = tradeLog.map(t => [
     t.date, t.entryStatus || 'confirmed', t.symbol, t.direction === 'bull' ? 'LONG' : 'SHORT',
-    t.signal1d, t.entryPrice, t.tpLevel || '', t.tpGain || '',
+    t.signal1d, t.confirmationPrice || '', t.entryPrice || '', t.tpLevel || '', t.tpGain || '',
     t.slLevel || '', t.slRisk || '', t.sizeQty || '', t.sizeNotional ? t.sizeNotional.toFixed(2) : '',
     t.sizeLeverage ? t.sizeLeverage.toFixed(1) : '',
     t.trailingPct || '', t.signalAge, t.confirmTime, t.outcome,

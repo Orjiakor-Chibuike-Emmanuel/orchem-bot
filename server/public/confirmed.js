@@ -70,7 +70,8 @@ function renderConfirmed(list) {
         <span class="confirmed-card-when">confirmed ${whenAbs}${whenAgo ? ` (${whenAgo})` : ''}</span>
       </div>
       <div class="confirmed-card-grid">
-        <span>entry <b>$${fmt(item.entryPrice)}</b></span>
+        <span>confirmed @ <b>$${fmt(item.confirmationPrice)}</b></span>
+        ${item.entryPrice && item.entryPrice !== item.confirmationPrice ? `<span>fill <b>$${fmt(item.entryPrice)}</b></span>` : ''}
         ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)</span>` : `<span>tp <b>none found</b> — size manually</span>`}
         ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)</span>` : `<span>sl <b>none found</b> — size manually</span>`}
         ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage}x</b></span>` : ''}
