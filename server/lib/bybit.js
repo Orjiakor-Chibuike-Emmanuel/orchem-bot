@@ -157,6 +157,23 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
   if (!API_KEY || !API_SECRET) return { skipped: true, reason: 'Bybit API keys not configured' };
   if (!slLevel) return { skipped: true, reason: 'no stop-loss level — refusing to open a position with no stop' };
 
+  // The last line of defense against a DUPLICATE entry — our own local
+  // "have we already confirmed this symbol today" tracking lives in a
+  // state file that is NOT durable on Render's free tier (no persistent
+  // disk), so a redeploy mid-day wipes it and a symbol that already has a
+  // real open position can look "fresh" again to the next scan cycle.
+  // Bybit's own position list can't be wiped by our redeploys — ask it
+  // directly instead of trusting local memory, and refuse to stack a
+  // second entry on top of one that's already open.
+  try {
+    const existing = await getOpenPosition(symbol);
+    if (existing) {
+      return { skipped: true, reason: `a position for ${symbol} is already open on Bybit (qty ${existing.size}) — refusing to open a duplicate` };
+    }
+  } catch (e) {
+    console.log(`[bybit] could not check for an existing position in ${symbol} before placing — proceeding anyway:`, e.message);
+  }
+
   // Never trust an incoming TP/SL blindly, even from our own upstream code
   // — this is the last line of defense before real money (demo or not)
   // moves. A stop on the wrong side of entry is refused outright (Bybit
