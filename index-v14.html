@@ -304,6 +304,15 @@ if ('serviceWorker' in navigator) {
     <div style="font-family:var(--mono);font-size:.68rem;color:var(--muted);display:flex;align-items:center;gap:6px;">
       <span style="color:var(--bull)">●</span> Volume Filter ON (1.2x avg)
     </div>
+    <div style="font-family:var(--mono);font-size:.68rem;color:var(--muted);display:flex;align-items:center;gap:6px;">
+      <span style="color:var(--bull)">●</span> Boundary Invalidation ON (no drift)
+    </div>
+    <div style="font-family:var(--mono);font-size:.68rem;color:var(--muted);display:flex;align-items:center;gap:6px;">
+      <span style="color:var(--bull)">●</span> Exhaustion Filter ON (per-pair, 6-20%/4h)
+    </div>
+    <div style="font-family:var(--mono);font-size:.68rem;color:var(--muted);display:flex;align-items:center;gap:6px;">
+      <span style="color:var(--bull)">●</span> Tight Stop-Loss ON
+    </div>
 
   </div>
 
@@ -379,12 +388,14 @@ if ('serviceWorker' in navigator) {
         <thead>
           <tr>
             <th>DATE</th>
+            <th>STATUS</th>
             <th>SYMBOL</th>
             <th>DIRECTION</th>
             <th>SIGNAL TYPE</th>
             <th>ENTRY</th>
             <th>TP</th>
             <th>SL</th>
+            <th>SIZE / LEVERAGE</th>
             <th>TRAILING</th>
             <th>AGE</th>
             <th>🤖 BOT RESULT</th>
@@ -393,7 +404,7 @@ if ('serviceWorker' in navigator) {
           </tr>
         </thead>
         <tbody id="log-body">
-          <tr><td colspan="11"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>
+          <tr><td colspan="14"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -465,21 +476,6 @@ const EXTREME_NEAR_PCT   = 5;    // skip if within 5% of 50-day high/low
 const EXTREME_MOVE_PCT   = 70;   // skip bearish if already 70%+ below 50-day high (or bull if 70%+ above 50-day low)
 const MIN_TP_PCT         = 4;    // minimum TP potential % — skip signals with less than 4% to TP
 
-// ── RECENT-MOVE EXHAUSTION FILTER (Oct 2026) ──
-// The 50-day extreme filter above only catches LONG-term exhaustion. It
-// completely misses a fast, sharp intraday crash/pump — exactly what hit
-// LA, EGLD, CHILLGUY, BLUR on 13 Oct: each one got shorted right after a
-// vertical crash on the 30min chart, then immediately bounced back against
-// the position. This filter looks at just the recent few hours (30min
-// candles) and skips a signal if price already made a big move in that
-// direction right before confirmation — it's likely a bounce setting up,
-// not a fresh continuation.
-const RECENT_MOVE_LOOKBACK_CANDLES = 8;   // last 8 x 30min candles = ~4 hours
-const RECENT_MOVE_EXHAUSTION_PCT   = 10;  // skip if already moved 10%+ in that direction within the lookback
-// Started at 15%, lowered to 10% after checking against the 13 Oct losses:
-// LA (~11%), EGLD (~11.5%), CHILLGUY (~13.8%) all would've slipped through
-// a 15% threshold — only BLUR (~33%) would've been caught. 10% catches all 4.
-
 // ── TELEGRAM ALERTS ──
 const TG_TOKEN   = '8710884236:AAGUUyZ19S6EpT_1Sf9oe8trEtdelD2CvhM';
 const TG_CHAT_ID = '1742837981';
@@ -492,8 +488,51 @@ let auxResults     = [];
 let watchlist      = []; // pairs flagged by 1D scan, being watched on 30min
 let confirmResults = []; // 30min confirmation results
 let tradeLog       = JSON.parse(localStorage.getItem('orchem_trade_log') || '[]'); // persists across sessions
-let tgAlertedPairs = new Set(); // track pairs already sent via Telegram this session
-let confirmedAlertedPairs = new Set(); // track pairs already sent an ENTRY CONFIRMED alert today — survives watchlist rebuilds
+
+// ── ALERT/INVALIDATION STATE — persisted to localStorage ──
+// Previously these three were plain in-memory Sets, which meant ANY page
+// refresh (phone tab killed, browser reopened, accidental reload) wiped
+// them back to empty. The next scan would then treat every pair that was
+// already confirmed/alerted/invalidated earlier TODAY as brand new —
+// re-firing duplicate Telegram alerts and re-logging duplicate trades for
+// setups you'd already acted on. Fix: save them to localStorage, keyed by
+// today's UTC date, and restore on load. If the saved date isn't today,
+// treat it as stale and start fresh (same effect as the midnight reset).
+const ALERT_STATE_KEY = 'orchem_alert_state';
+function todayUTCStr() {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+}
+function loadAlertState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ALERT_STATE_KEY) || 'null');
+    if (saved && saved.date === todayUTCStr()) {
+      return {
+        tg:          new Set(saved.tg || []),
+        confirmed:   new Set(saved.confirmed || []),
+        invalidated: new Set(saved.invalidated || []),
+        exhaustedLogged: new Set(saved.exhaustedLogged || [])
+      };
+    }
+  } catch(_) {}
+  return { tg: new Set(), confirmed: new Set(), invalidated: new Set(), exhaustedLogged: new Set() };
+}
+function saveAlertState() {
+  try {
+    localStorage.setItem(ALERT_STATE_KEY, JSON.stringify({
+      date:        todayUTCStr(),
+      tg:          [...tgAlertedPairs],
+      confirmed:   [...confirmedAlertedPairs],
+      invalidated: [...invalidatedPairs],
+      exhaustedLogged: [...exhaustedLoggedPairs]
+    }));
+  } catch(_) {}
+}
+const __alertState = loadAlertState();
+let tgAlertedPairs        = __alertState.tg;         // track pairs already sent via Telegram today
+let confirmedAlertedPairs = __alertState.confirmed;  // track pairs already sent an ENTRY CONFIRMED alert today
+let invalidatedPairs      = __alertState.invalidated;// track pairs whose setup broke the wrong way and is dead for today
+let exhaustedLoggedPairs  = __alertState.exhaustedLogged; // one trade-log entry per pair per day for the exhausted-hold, even across rescans
 let activeTab      = 'engulf';
 let activeFilter   = 'all';
 let activeFilterAux= 'all';
@@ -505,6 +544,79 @@ let autoTimer      = null;
 let confirmTimer   = null;
 let watchlistClearTimer = null;
 let notifGranted   = false;
+
+// ── WATCHLIST PERSISTENCE — THE REAL REASON TELEGRAM "ALMOST NEVER FIRES" ──
+// `watchlist`, `confirmTimer` and `watchlistClearTimer` were all plain
+// in-memory variables with nothing on page load to restore them. That
+// means the ENTIRE 30min-confirmation loop — and therefore every Telegram
+// alert, since those only ever fire from inside run2HConfirmation — only
+// ran for as long as one single browser tab stayed open continuously
+// after the last manual "SCAN MARKET" click. Any tab refresh, the phone's
+// browser killing a backgrounded tab (which mobile browsers do often and
+// aggressively), or just closing the app, silently stopped ALL future
+// confirmation checks until you noticed and clicked Scan again. That is
+// almost certainly a bigger cause of missed alerts than anything about
+// the Telegram call itself. Fix: save the watchlist to localStorage
+// whenever it's built, and on page load, if a same-day watchlist is
+// saved, restore it and resume watching immediately — no manual rescan
+// needed. This does NOT fix a tab that's fully closed/killed (nothing
+// can run JS with no tab open) — that's what moving this to a real
+// server (Render) would actually solve, which is still on the list.
+const WATCHLIST_STATE_KEY = 'orchem_watchlist_state';
+function saveWatchlistState() {
+  try {
+    localStorage.setItem(WATCHLIST_STATE_KEY, JSON.stringify({
+      date: todayUTCStr(),
+      watchlist
+    }));
+  } catch(_) {}
+}
+function loadWatchlistState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WATCHLIST_STATE_KEY) || 'null');
+    if (saved && saved.date === todayUTCStr() && Array.isArray(saved.watchlist)) {
+      return saved.watchlist;
+    }
+  } catch(_) {}
+  return null;
+}
+
+// Starts (or resumes) the 30min confirmation loop for whatever is
+// currently in `watchlist` — shared by a fresh scan and by the on-load
+// auto-resume, so there's only one place this logic can drift out of sync.
+function beginWatching() {
+  if (!watchlist.length) return;
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'START_WATCH',
+      watchlist: watchlist.map(w => ({ ...w, interval: '30m' })),
+      interval: AUTO_INTERVAL_MS,
+      alerted: []
+    });
+  }
+  run2HConfirmation();
+  if (confirmTimer) clearInterval(confirmTimer);
+  confirmTimer = setInterval(() => {
+    flushTgQueue(); // keep retrying any stuck alerts between full scans too
+    run2HConfirmation();
+    runAutoOutcomeChecks(); // check pending trade outcomes every hour
+  }, AUTO_INTERVAL_MS);
+
+  // Auto-clear watchlist at the NEXT daily candle close (00:00 UTC),
+  // not a fixed 24h timer from whenever this started.
+  const nextMidnightUTC = new Date();
+  nextMidnightUTC.setUTCHours(24, 0, 0, 0);
+  const msUntilNextClose = nextMidnightUTC.getTime() - Date.now();
+
+  if (watchlistClearTimer) clearTimeout(watchlistClearTimer);
+  watchlistClearTimer = setTimeout(() => {
+    watchlist = []; confirmResults = [];
+    saveWatchlistState();
+    renderConfirm(); updateConfirmBadge();
+    if (confirmTimer) { clearInterval(confirmTimer); confirmTimer = null; }
+    toast('🔄 Daily candle closed — watchlist reset. Run a new scan.', 'neutral');
+  }, msUntilNextClose);
+}
 
 /* ═══════════════════════════════════════
    BINANCE HELPERS
@@ -743,35 +855,6 @@ function isTooCloseToExtreme(closed, direction) {
   }
 }
 
-// ── RECENT-MOVE EXHAUSTION FILTER ──
-// Short-timeframe sibling of isTooCloseToExtreme above. That one only
-// looks across the full 50-day window, so it misses a sharp move that
-// happened in just the last few hours. This looks at the most recent
-// RECENT_MOVE_LOOKBACK_CANDLES candles only (works for both the 30min
-// confirmation array and, if ever needed, a shorter 1D slice) and skips
-// the signal if price already crashed (bear) or pumped (bull) hard within
-// that short window — a likely bounce/pullback setup, not a fresh move.
-function isRecentMoveExhausted(candles, direction) {
-  if (!candles || candles.length < 2) return false;
-  const recent = candles.slice(-RECENT_MOVE_LOOKBACK_CANDLES);
-  if (recent.length < 2) return false;
-
-  const recentHigh = Math.max(...recent.map(c => c.high));
-  const recentLow  = Math.min(...recent.map(c => c.low));
-  if (recentHigh <= 0) return false;
-
-  if (direction === 'bear') {
-    // Already crashed hard in the recent window → likely due a bounce
-    const recentDropPct = ((recentHigh - recentLow) / recentHigh) * 100;
-    return recentDropPct >= RECENT_MOVE_EXHAUSTION_PCT;
-  } else {
-    // Already pumped hard in the recent window → likely due a pullback
-    if (recentLow <= 0) return false;
-    const recentPumpPct = ((recentHigh - recentLow) / recentLow) * 100;
-    return recentPumpPct >= RECENT_MOVE_EXHAUSTION_PCT;
-  }
-}
-
 // Find the nearest resistance ABOVE price (take profit for longs)
 // or nearest support BELOW price (take profit for shorts)
 // ── PHASE 3 HELPERS ──
@@ -870,23 +953,6 @@ function resolveSL(price, levels, closed, direction) {
   if (fb == null) return null;
   const valid = direction === 'bull' ? fb < price * 0.995 : fb > price * 1.005;
   return valid ? { price: fb, estimated: true } : null;
-}
-
-// ── TIGHT STOP-LOSS: prior 30min candle rule ──
-// Backtest finding (Oct 2026 trade log review): on losing trades, price
-// ran well past where the 30min candle immediately BEFORE confirmation
-// would have stopped it out — using that candle's opposite extreme as SL
-// would have cut those losses significantly. Checked against real wins
-// too (ADAUSDT, RESOLVUSDT) — price ran clean to TP without dipping back
-// into that zone, so this doesn't appear to clip winners short.
-// For longs: SL = low of the candle before the confirming candle.
-// For shorts: SL = high of the candle before the confirming candle.
-function tightStopLevel(entryPrice, priorCandle, direction) {
-  if (!priorCandle) return null; // no prior 30min candle available yet
-  const level = direction === 'bull' ? priorCandle.low : priorCandle.high;
-  // Sanity check — must actually sit on the correct side of entry
-  const valid = direction === 'bull' ? level < entryPrice * 0.999 : level > entryPrice * 1.001;
-  return valid ? { price: level, estimated: false, tight: true } : null;
 }
 
 // Signal age helper — returns hours since signal fired and color code
@@ -1095,8 +1161,128 @@ async function fetch2HKlines(symbol, sinceTimestamp) {
     close:     parseFloat(k[4]),
     isBullish: parseFloat(k[4]) >= parseFloat(k[1])
   }));
-  // Only keep candles that OPENED after the 1D signal candle closed
-  return all.filter(c => c.time >= sinceTimestamp);
+  // Return BOTH the signal-window-filtered candles (for the boundary logic,
+  // which must only look at candles since the 1D signal closed) AND the
+  // full unfiltered 100-candle history. The exhaustion check below needs
+  // `all` because a signal that closes right after UTC midnight would
+  // otherwise only have ~1 candle of lookback via the filtered array,
+  // hiding a crash/pump that happened just before midnight.
+  return {
+    filtered: all.filter(c => c.time >= sinceTimestamp),
+    all
+  };
+}
+
+// ── RECENT-MOVE EXHAUSTION FILTER ──
+// Skip a confirmation if price has already moved a large % in EITHER
+// direction within the last few hours. The pattern this catches: price
+// crashes/pumps hard, then the FIRST thing it does afterward is bounce/
+// retrace — and that bounce can look exactly like a fresh breakout to the
+// boundary logic. Entering right into that bounce is how the Oct 13 SHORT
+// failures (LA, EGLD, CHILLGUY, BLUR) happened. Symmetric: checks both the
+// bear case (shorting into a bounce after a crash) and the bull case
+// (longing into a pullback after a pump).
+const RECENT_MOVE_LOOKBACK_CANDLES = 8;  // 8 x 30min = last ~4 hours
+const RECENT_MOVE_EXHAUSTION_PCT   = 10; // flat FALLBACK ONLY now — started at
+                                          // 15%, lowered to 10% after checking
+                                          // it against the real Oct 13 failures
+                                          // (LA ~11%, EGLD ~11.5%, CHILLGUY
+                                          // ~13.8%, BLUR ~33%) — 15% would have
+                                          // only caught BLUR. Used only when a
+                                          // pair-specific threshold (below)
+                                          // couldn't be computed.
+
+// ── PER-PAIR VOLATILITY-SCALED THRESHOLD ──
+// A flat 10% is too loose for a major pair (10% in 4h is genuinely extreme
+// there) and too strict for a normally-choppy small-cap alt (which can do
+// 10%+ in 4h on an ordinary day without being "exhausted" at all). Instead,
+// measure THIS pair's own average 30min candle range over the last ~24h and
+// scale the threshold off that. The multiplier (4x) and the floor/ceiling
+// are a judgment call, same as the original 15%→10% — revisit once there's
+// real win/loss data on how often this fires correctly vs. not (that's what
+// logging 'exhausted' entries to the trade log is for).
+const EXHAUSTION_VOLATILITY_MULTIPLIER = 4;
+const EXHAUSTION_PCT_FLOOR    = 6;  // never go more sensitive than this, even on a dead-quiet coin
+const EXHAUSTION_PCT_CEILING  = 20; // never go more lax than this, even on an extremely volatile coin
+
+async function calcPairExhaustionThreshold(symbol) {
+  try {
+    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=48`); // ~24h of 30min candles
+    const raw = await safeJson(r);
+    if (!Array.isArray(raw) || raw.length < 10) return RECENT_MOVE_EXHAUSTION_PCT;
+    const ranges = raw.map(k => {
+      const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]);
+      return close > 0 ? ((high - low) / close) * 100 : 0;
+    });
+    const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+    const scaled = avgRange * EXHAUSTION_VOLATILITY_MULTIPLIER;
+    return Math.min(EXHAUSTION_PCT_CEILING, Math.max(EXHAUSTION_PCT_FLOOR, scaled));
+  } catch(_) {
+    return RECENT_MOVE_EXHAUSTION_PCT;
+  }
+}
+
+function isRecentMoveExhausted(candles, direction, thresholdPct = RECENT_MOVE_EXHAUSTION_PCT) {
+  if (!candles || candles.length < 2) return false;
+  const recent = candles.slice(-RECENT_MOVE_LOOKBACK_CANDLES);
+  if (recent.length < 2) return false;
+  const recentHigh = Math.max(...recent.map(c => c.high));
+  const recentLow  = Math.min(...recent.map(c => c.low));
+  if (recentHigh <= 0) return false;
+  if (direction === 'bear') {
+    // About to SHORT — exhausted if price already crashed hard recently
+    const recentDropPct = ((recentHigh - recentLow) / recentHigh) * 100;
+    return recentDropPct >= thresholdPct;
+  } else {
+    // About to LONG — exhausted if price already pumped hard recently
+    if (recentLow <= 0) return false;
+    const recentPumpPct = ((recentHigh - recentLow) / recentLow) * 100;
+    return recentPumpPct >= thresholdPct;
+  }
+}
+
+// ── TIGHT STOP-LOSS ──
+// SL = the low (long) / high (short) of the 30min candle immediately
+// BEFORE the confirming candle. Verified against real historical losers
+// (ARCUSDT, ILVUSDT) and winners (ADAUSDT, RESOLVUSDT) by hand: this cuts
+// loss size meaningfully on losers without clipping real winners early.
+function tightStopLevel(entryPrice, priorCandle, direction) {
+  if (!priorCandle) return null;
+  const level = direction === 'bull' ? priorCandle.low : priorCandle.high;
+  const valid = direction === 'bull' ? level < entryPrice * 0.999 : level > entryPrice * 1.001;
+  return valid ? { price: level, estimated: false, tight: true } : null;
+}
+
+// ── POSITION SIZE FOR A FIXED MAX-RISK AMOUNT ──
+// You said you don't want to risk more than $35 on any single trade.
+// Risk in dollars only depends on how far the SL sits from entry and how
+// many units you hold — leverage changes the MARGIN required to open the
+// position, not the $ amount lost if SL is hit (assuming the stop order
+// actually fills there — real slippage/liquidation gaps can make the
+// real loss a bit worse than this, which is why this is "suggested", not
+// a guarantee).
+const MAX_RISK_USD = 35;
+
+// You said you actually commit $150 of margin per trade. Leverage is just
+// how big a notional position that margin controls:
+//   leverage = notional / margin
+// A very tight SL relative to your $35 risk can call for a BIG notional
+// (small price gap → many units needed to lose $35 if it's hit), which
+// then calls for high leverage to open with only $150 of margin. If the
+// required leverage comes out higher than what's realistic/available,
+// that's a sign the SL is too tight for this sizing — not something to
+// force by cranking leverage up regardless.
+const MARGIN_PER_TRADE_USD   = 150;
+const MAX_SENSIBLE_LEVERAGE  = 50; // flag anything above this rather than silently suggesting it
+
+function calcPositionSize(entryPrice, slLevel, maxRiskUsd, marginUsd) {
+  if (!entryPrice || !slLevel) return null;
+  const riskPerUnit = Math.abs(entryPrice - slLevel);
+  if (riskPerUnit <= 0) return null;
+  const qty      = maxRiskUsd / riskPerUnit;
+  const notional = qty * entryPrice;
+  const leverage = marginUsd ? notional / marginUsd : null;
+  return { qty, notional, riskUsd: maxRiskUsd, leverage };
 }
 
 // ═══════════════════════════════════════
@@ -1104,12 +1290,19 @@ async function fetch2HKlines(symbol, sinceTimestamp) {
 // 30MIN CONFIRMATION — CORRECT BOUNDARY LOGIC
 //
 // Applies the SAME boundary system as the 1D scan but on 30min candles.
-// The 1D signal candle's high/low defines the INITIAL boundary.
+// The 1D signal candle's high/low defines the ONE boundary that matters.
 // Subsequent 30min candles that stay inside are auxiliary — their wicks
 // can extend the boundary outward but only a CLOSE outside fires confirmation.
 //
-// This prevents spike candles (wick breaks that close back inside) from
-// falsely triggering confirmation — exactly the same rule as 1D.
+// INVALIDATION RULE (fixed — previously the boundary silently reset and
+// drifted to a wrong-direction candle's own high/low, which let a LATER
+// candle "confirm" against that drifted, easier level without ever
+// actually breaking the real 1D signal level. That produced false
+// confirmations — exactly what caused the Oct 19 failed trades):
+// the FIRST 30min candle that closes the WRONG way kills this setup for
+// the rest of today. No new boundary gets drawn, no second chances — the
+// only way to confirm is for a candle to break the ORIGINAL 1D level
+// cleanly, with no wrong-way close in between.
 // ═══════════════════════════════════════
 function analyse2H(symbol, candles2h, requiredDirection, signalHigh, signalLow) {
   if (!candles2h || candles2h.length < 2) return null;
@@ -1118,17 +1311,12 @@ function analyse2H(symbol, candles2h, requiredDirection, signalHigh, signalLow) 
   const closed = candles2h.slice(0, -1);
   if (closed.length < 1) return null;
 
-  // ── STEP 1: Set initial boundary from the 1D signal candle's high/low ──
-  // This IS the boundary — the 30min candles must break OUTSIDE this
+  // The boundary is fixed at the 1D signal candle's high/low — it can only
+  // ever expand outward via wicks on in-direction auxiliary candles. It
+  // never resets to a new candle, because that's what let confirmations
+  // fire without ever breaking the real signal level.
   let boundaryHigh = signalHigh;
   let boundaryLow  = signalLow;
-  let parentIdx    = -1; // -1 means the 1D candle itself is the parent
-
-  // ── STEP 2: Walk through 30min candles applying the same boundary rules ──
-  // - If a 30min close breaks outside boundary → new parent, boundary resets
-  // - If a 30min wick exceeds boundary but close stays inside → expand boundary outward
-  // - Confirmation fires on the FIRST close that breaks the boundary
-  //   in the REQUIRED DIRECTION matching the 1D signal
 
   for (let i = 0; i < closed.length; i++) {
     const c = closed[i];
@@ -1137,25 +1325,16 @@ function analyse2H(symbol, candles2h, requiredDirection, signalHigh, signalLow) 
     const breaksBear = c.close < boundaryLow;
 
     if (breaksBull || breaksBear) {
-      // This 30min candle's CLOSE broke outside the boundary
       const direction = breaksBull ? 'bull' : 'bear';
 
-      // Only confirm if it matches the required 1D direction
       if (direction === requiredDirection) {
         const closeTime = c.time + (30 * 60 * 1000);
         const dateStr = new Date(closeTime).toLocaleString([], {
           day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
         });
-        const auxCount = parentIdx === -1 ? i : i - parentIdx - 1;
         const label = breaksBull
           ? `30min Bull Breakout > $${fmt(boundaryHigh)}`
           : `30min Bear Breakout < $${fmt(boundaryLow)}`;
-
-        // The 30min candle immediately BEFORE this confirming candle —
-        // used for the tight stop-loss rule (SL = that candle's opposite
-        // extreme). null if this is the very first 30min candle in the
-        // fetched window (nothing earlier to anchor the stop to).
-        const priorCandle = i > 0 ? closed[i - 1] : null;
 
         return {
           direction: requiredDirection,
@@ -1163,15 +1342,14 @@ function analyse2H(symbol, candles2h, requiredDirection, signalHigh, signalLow) 
           closePrice: c.close,
           dateStr,
           targetLevel: breaksBull ? boundaryHigh : boundaryLow,
-          auxCount,
-          confirmIndex: i,
-          priorCandle
+          auxCount: i,
+          priorCandle: closed[i - 1] || null, // for the tight-stop SL rule
+          confirmTime: c.time
         };
       } else {
-        // Broke in the WRONG direction — this becomes new parent, reset boundary
-        parentIdx    = i;
-        boundaryHigh = c.high;
-        boundaryLow  = c.low;
+        // Closed the WRONG way — this setup is dead for today. Do not
+        // reset the boundary and keep watching; that's the old bug.
+        return { invalidated: true, invalidatedAt: c.time };
       }
 
     } else {
@@ -1182,7 +1360,7 @@ function analyse2H(symbol, candles2h, requiredDirection, signalHigh, signalLow) 
     }
   }
 
-  return null; // no valid 30min confirmation yet
+  return null; // still waiting — no confirmation and no invalidation yet
 }
 
 async function run2HConfirmation() {
@@ -1190,43 +1368,74 @@ async function run2HConfirmation() {
   confirmResults = [];
 
   for (const item of watchlist) {
+    // Already dead for today — don't even re-fetch, just show it as invalidated.
+    if (item.invalidated) {
+      confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: item.entryPrice });
+      continue;
+    }
+
     try {
-      const candles2h = await fetch2HKlines(item.symbol, item.signalTimestamp);
-      let result2h  = candles2h
+      const klines2h  = await fetch2HKlines(item.symbol, item.signalTimestamp);
+      const candles2h = klines2h ? klines2h.filtered : null;
+      const allCandles2h = klines2h ? klines2h.all : null;
+      const result2h  = candles2h
         ? analyse2H(item.symbol, candles2h, item.direction, item.signalHigh, item.signalLow)
         : null;
 
-      // ── RECENT-MOVE EXHAUSTION CHECK ──
-      // result2h just fired because a 30min candle closed outside the
-      // boundary — but if price already crashed/pumped hard in the few
-      // hours leading up to THIS candle, it's probably a bounce/pullback,
-      // not a fresh continuation (see 13 Oct: LA, EGLD, CHILLGUY, BLUR).
-      // Suppress the confirmation until price is no longer in that
-      // exhausted state — keeps the item watching instead of firing.
-      if (result2h) {
-        const closed30 = candles2h.slice(0, -1);
-        const windowSoFar = closed30.slice(0, result2h.confirmIndex + 1);
-        if (isRecentMoveExhausted(windowSoFar, result2h.direction)) {
-          result2h = null;
-        }
-      }
-
-      // Get latest 30min close as proxy for current price
-      const latestPrice = candles2h && candles2h.length >= 2
-        ? candles2h[candles2h.length - 2].close
+      // Get latest 30min close as proxy for current price — use the
+      // unfiltered `all` array so this still works right after midnight
+      // when the signal-window-filtered array may be very short.
+      const latestPrice = allCandles2h && allCandles2h.length >= 2
+        ? allCandles2h[allCandles2h.length - 2].close
         : item.entryPrice;
 
-      confirmResults.push({
-        ...item,
-        confirmed:    !!result2h,
-        signal2h:     result2h,
-        currentPrice: latestPrice
-      });
+      // Setup broke the wrong way — invalidate it and stop watching.
+      // (Pushed to confirmResults at the end of this block, same as every
+      // other path, so the display is never built from stale data.)
+      if (result2h && result2h.invalidated) {
+        item.invalidated = true;
+        invalidatedPairs.add(item.symbol);
+        saveAlertState();
+        // Log once for your own records — lets you see how often this
+        // filter actually fires, not just that it exists.
+        if (!item.invalidatedLogged) {
+          item.invalidatedLogged = true;
+          logTrade(item, null, 'invalidated');
+        }
+        confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice });
+        await sleep(80);
+        continue;
+      }
+
+      // ── RECENT-MOVE EXHAUSTION GATE ──
+      // A real confirmation, but hold off entering if price already moved
+      // hard in the last ~4 hours — shorting right into a bounce after a
+      // crash (or longing into a pullback after a pump) is how the Oct 13
+      // SHORT failures happened. Uses the UNFILTERED candle history so it
+      // can see across the UTC-midnight boundary; checked every cycle, so
+      // once the move cools off the same confirmation can still fire. The
+      // threshold is this pair's own volatility-scaled number (computed at
+      // watchlist build time), not one flat % for every coin.
+      if (result2h && !item.alerted && isRecentMoveExhausted(allCandles2h, item.direction, item.exhaustionPct)) {
+        // Log once per pair per day (not every poll cycle while it's held,
+        // and not again after a watchlist rebuild) so you can later judge
+        // whether this threshold is too strict or not strict enough,
+        // instead of guessing from memory.
+        if (!exhaustedLoggedPairs.has(item.symbol)) {
+          exhaustedLoggedPairs.add(item.symbol);
+          saveAlertState();
+          logTrade(item, result2h, 'exhausted');
+        }
+        confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice, exhausted: true });
+        await sleep(80);
+        continue;
+      }
 
       // Fire alert if newly confirmed
       if (result2h && !item.alerted) {
         item.alerted = true;
         confirmedAlertedPairs.add(item.symbol); // persists across watchlist rebuilds until midnight reset
+        saveAlertState();
         const dir      = result2h.direction === 'bull' ? '▲ LONG' : '▼ SHORT';
         const dirEmoji = result2h.direction === 'bull' ? '🟢' : '🔴';
 
@@ -1247,13 +1456,25 @@ async function run2HConfirmation() {
           }
         } catch(_) {}
 
+        // Prefer the tight stop (prior 30min candle's own extreme) over the
+        // wider swing-level SL — checked by hand against real losers
+        // (ARCUSDT, ILVUSDT) and winners (ADAUSDT, RESOLVUSDT): it cuts
+        // loss size meaningfully without clipping real winners early.
+        // Falls back to the swing-level SL if no valid prior candle.
+        const tightSl = tightStopLevel(entryPrice, result2h.priorCandle, item.direction);
+        if (tightSl) confirmSl = tightSl;
+
         // Update item with recalculated levels from actual entry price
         // Safety check: TP must be above entry for longs, below for shorts
         const tpValid = confirmTp && (
           (item.direction === 'bull' && confirmTp.price > entryPrice) ||
           (item.direction === 'bear' && confirmTp.price < entryPrice)
         );
-        // Use recalculated TP if valid, otherwise fall back to the
+        const slValid = confirmSl && (
+          (item.direction === 'bull' && confirmSl.price < entryPrice) ||
+          (item.direction === 'bear' && confirmSl.price > entryPrice)
+        );
+        // Use recalculated levels if valid, otherwise fall back to the
         // original 1D levels (which by this point already carry their own
         // fallback estimate if no clean swing pivot existed at scan time)
         if (tpValid) {
@@ -1262,27 +1483,22 @@ async function run2HConfirmation() {
           item.tpEstimated = confirmTp.estimated;
         }
         // Keep original tpLevel if recalculation failed — better than showing nothing
-
-        // ── SL: tight stop (prior 30min candle) takes priority ──
-        // Falls back to the old swing/range-extreme SL only if there's no
-        // prior 30min candle yet to anchor the tight stop to.
-        const tightSl = tightStopLevel(entryPrice, result2h.priorCandle, item.direction);
-        const slValid = confirmSl && (
-          (item.direction === 'bull' && confirmSl.price < entryPrice) ||
-          (item.direction === 'bear' && confirmSl.price > entryPrice)
-        );
-        if (tightSl) {
-          item.slLevel     = tightSl.price;
-          item.slRisk      = calcRR(entryPrice, tightSl.price);
-          item.slEstimated = false;
-          item.slTight     = true;
-        } else if (slValid) {
+        if (slValid) {
           item.slLevel     = confirmSl.price;
           item.slRisk      = calcRR(entryPrice, confirmSl.price);
           item.slEstimated = confirmSl.estimated;
-          item.slTight     = false;
         }
-        // Keep original slLevel if both recalculations failed
+        // Keep original slLevel if recalculation failed
+
+        // ── SUGGESTED SIZE + LEVERAGE FOR YOUR $35 RISK / $150 MARGIN ──
+        const sizing = calcPositionSize(entryPrice, item.slLevel, MAX_RISK_USD, MARGIN_PER_TRADE_USD);
+        if (sizing) {
+          item.sizeQty       = sizing.qty;
+          item.sizeNotional  = sizing.notional;
+          item.sizeLeverage  = sizing.leverage;
+        } else {
+          item.sizeQty = item.sizeNotional = item.sizeLeverage = null;
+        }
 
         // ── AUTO-LOG THE TRADE ──
         logTrade(item, result2h);
@@ -1299,9 +1515,12 @@ async function run2HConfirmation() {
 
         // ── TELEGRAM ALERT (with correct entry-based TP/SL) ──
         const tpTag         = item.tpEstimated ? ' ⚠️est.' : '';
-        const slTag          = item.slTight ? ' 🎯tight' : (item.slEstimated ? ' ⚠️est.' : '');
+        const slTag          = item.slEstimated ? ' ⚠️est.' : '';
         const tpText       = item.tpLevel     ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}` : '\n🎯 TP: none found — size manually';
         const slText       = item.slLevel     ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)${slTag}` : '\n🛑 SL: none found — size manually';
+        const levTag        = item.sizeLeverage && item.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? ' ⚠️ SL too tight for this margin — consider skipping or a wider stop' : '';
+        const sizeText      = item.sizeQty    ? `\n💰 Size for $${MAX_RISK_USD} risk: ${fmt(item.sizeQty)} ${item.symbol.replace('USDT','')} (~$${item.sizeNotional.toFixed(2)} notional)` +
+          (item.sizeLeverage ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage.toFixed(1)}x${levTag}` : '') : '';
         const trailingText = item.trailingPct ? `\n📌 Trailing Stop: ${item.trailingPct}% (set on Bybit)` : '';
         tgAlertedPairs.add(item.symbol); // prevent duplicate scan summary for confirmed pairs
         const tgMsg = `${dirEmoji} <b>ENTRY CONFIRMED</b>\n`
@@ -1309,9 +1528,22 @@ async function run2HConfirmation() {
           + `Signal: ${item.signal1d}\n`
           + `Confirmation: ${result2h.label}\n`
           + `Entry: $${fmt(entryPrice)} · ${result2h.dateStr}`
-          + tpText + slText + trailingText;
+          + tpText + slText + sizeText + trailingText;
         sendTelegram(tgMsg);
       }
+
+      // ── Build the display snapshot LAST, after any TP/SL recalculation ──
+      // above has already run. Pushing this earlier (before the recalc
+      // block) was the bug behind the ID/USDT mismatch: the card would
+      // show the NEW 30min entry price next to the OLD 1D-based SL price
+      // and SL%, because they'd been captured at different points in time.
+      // Now `item` is fully up to date before it's ever snapshotted.
+      confirmResults.push({
+        ...item,
+        confirmed:    !!result2h,
+        signal2h:     result2h,
+        currentPrice: latestPrice
+      });
     } catch(_) {
       confirmResults.push({ ...item, confirmed: false, signal2h: null });
     }
@@ -1394,6 +1626,14 @@ async function startScan() {
       await sleep(50);
     }));
 
+    // Calculate each pair's own exhaustion threshold from its real recent
+    // volatility, instead of using one flat % for every coin.
+    const exhaustionThresholdMap = {};
+    await Promise.all(allSignals.map(async r => {
+      exhaustionThresholdMap[r.symbol] = await calcPairExhaustionThreshold(r.symbol);
+      await sleep(50);
+    }));
+
     watchlist = allSignals.map(r => ({
       symbol:          r.symbol,
       direction:       r.direction,
@@ -1410,47 +1650,27 @@ async function startScan() {
       slRisk:          r.slRisk  || null,
       slEstimated:     r.slEstimated || false,
       trailingPct:     trailingMap[r.symbol] || null,
+      exhaustionPct:   exhaustionThresholdMap[r.symbol] || RECENT_MOVE_EXHAUSTION_PCT,
       entryPrice:      r.price   || r.closePrice || null,
       detectedAt:      Date.now(),
       // Preserve confirmed-alert state across rescans — do NOT reset to false
       // if this pair already got its ENTRY CONFIRMED Telegram alert today,
       // otherwise every rescan re-fires a duplicate confirmation alert.
-      alerted:         confirmedAlertedPairs.has(r.symbol)
+      alerted:         confirmedAlertedPairs.has(r.symbol),
+      // Preserve invalidation too — a pair whose setup already broke the
+      // wrong way today should stay dead, not get re-watched from scratch.
+      invalidated:     invalidatedPairs.has(r.symbol)
     }));
+
+    // Persist immediately — a fresh scan (even one that finds nothing)
+    // must overwrite whatever was saved before, not leave stale state
+    // behind for the next page load to wrongly resume.
+    saveWatchlistState();
 
     // Start 30min confirmation scan immediately
     if (watchlist.length) {
       toast(`👁 Watching ${watchlist.length} pairs for 30min confirmation`, 'neutral');
-      // ── Send watchlist to Service Worker for background alerts ──
-      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({
-          type: 'START_WATCH',
-          watchlist: watchlist.map(w => ({ ...w, interval: '30m' })),
-          interval: AUTO_INTERVAL_MS,
-          alerted: []
-        });
-      }
-      run2HConfirmation();
-      if (confirmTimer) clearInterval(confirmTimer);
-      confirmTimer = setInterval(() => {
-        flushTgQueue(); // keep retrying any stuck alerts between full scans too
-        run2HConfirmation();
-        runAutoOutcomeChecks(); // check pending trade outcomes every hour
-      }, AUTO_INTERVAL_MS);
-
-      // Auto-clear watchlist at the NEXT daily candle close (00:00 UTC),
-      // not a fixed 24h timer from whenever the scan happened to run.
-      const nextMidnightUTC = new Date();
-      nextMidnightUTC.setUTCHours(24, 0, 0, 0);
-      const msUntilNextClose = nextMidnightUTC.getTime() - Date.now();
-
-      if (watchlistClearTimer) clearTimeout(watchlistClearTimer);
-      watchlistClearTimer = setTimeout(() => {
-        watchlist = []; confirmResults = [];
-        renderConfirm(); updateConfirmBadge();
-        if (confirmTimer) { clearInterval(confirmTimer); confirmTimer = null; }
-        toast('🔄 Daily candle closed — watchlist reset. Run a new scan.', 'neutral');
-      }, msUntilNextClose);
+      beginWatching();
     }
 
     document.getElementById('last-scan').textContent =
@@ -1595,7 +1815,14 @@ function fmt(p) {
 ═══════════════════════════════════════ */
 
 // Add a confirmed trade to the log automatically
-function logTrade(item, result2h) {
+// entryStatus: 'confirmed' (a real entry you'd actually take) | 'invalidated'
+// (setup broke the wrong way — logged for your own records so you can see
+// how often this filter is firing) | 'exhausted' (a real confirmation that
+// got held back by the recent-move filter — logged so you can later judge
+// whether 10%/4h is too strict or not strict enough, instead of guessing).
+// Only 'confirmed' entries are real trades — only those get auto-checked
+// for win/loss and only those count toward the bot-accuracy stats.
+function logTrade(item, result2h, entryStatus = 'confirmed') {
   const age = item.detectedAt ? getSignalAge(item.detectedAt) : null;
   const entry = {
     id:          Date.now(),
@@ -1604,17 +1831,23 @@ function logTrade(item, result2h) {
     symbol:      item.symbol,
     direction:   item.direction,
     signal1d:    item.signal1d || '—',
-    entryPrice:  result2h.closePrice,
+    entryStatus, // 'confirmed' | 'invalidated' | 'exhausted'
+    entryPrice:  result2h ? result2h.closePrice : item.entryPrice,
     tpLevel:     item.tpLevel,
     tpGain:      item.tpGain,
     slLevel:     item.slLevel,
     slRisk:      item.slRisk,
-    slTight:     item.slTight || false,
+    sizeQty:     item.sizeQty     || null,
+    sizeNotional:item.sizeNotional|| null,
+    sizeLeverage:item.sizeLeverage|| null,
     trailingPct: item.trailingPct,
     signalAge:   age ? `${age.hours}h (${age.label})` : '—',
-    confirmTime: result2h.dateStr,
-    autoOutcome: 'open',   // auto-checked: 'win', 'loss', 'open'
-    outcome:     'pending', // manual override: 'win', 'loss', 'skip'
+    confirmTime: result2h ? result2h.dateStr : '—',
+    // Only a real 'confirmed' entry is an actual trade — only it gets
+    // auto-checked for win/loss. Invalidated/exhausted rows never had a
+    // real entry, so there's nothing to check.
+    autoOutcome: entryStatus === 'confirmed' ? 'open' : 'n/a',
+    outcome:     entryStatus === 'confirmed' ? 'pending' : 'n/a', // manual override: 'win', 'loss', 'skip'
     notes:       ''
   };
   tradeLog.unshift(entry); // newest first
@@ -1720,13 +1953,13 @@ function clearLog() {
 // Export to CSV
 function exportLog() {
   if (!tradeLog.length) { toast('No trades to export', 'neutral'); return; }
-  const headers = ['Date','Symbol','Direction','Signal','Entry Price','TP Level','TP %','SL Level','SL %','SL Method','Trailing %','Signal Age','Confirm Time','Outcome','Notes'];
+  const headers = ['Date','Status','Symbol','Direction','Signal','Entry Price','TP Level','TP %','SL Level','SL %','Size (qty)','Size (notional $)','Leverage (x)','Trailing %','Signal Age','Confirm Time','Outcome','Notes'];
   const rows = tradeLog.map(t => [
-    t.date, t.symbol, t.direction === 'bull' ? 'LONG' : 'SHORT',
+    t.date, t.entryStatus || 'confirmed', t.symbol, t.direction === 'bull' ? 'LONG' : 'SHORT',
     t.signal1d, t.entryPrice, t.tpLevel || '', t.tpGain || '',
-    t.slLevel || '', t.slRisk || '', t.slTight ? 'tight (prior candle)' : 'swing/range',
-    t.trailingPct || '',
-    t.signalAge, t.confirmTime, t.outcome, `"${(t.notes||'').replace(/"/g,'""')}"`
+    t.slLevel || '', t.slRisk || '', t.sizeQty || '', t.sizeNotional ? t.sizeNotional.toFixed(2) : '',
+    t.sizeLeverage ? t.sizeLeverage.toFixed(1) : '',
+    t.trailingPct || '', t.signalAge, t.confirmTime, t.outcome, `"${(t.notes||'').replace(/"/g,'""')}"`
   ]);
   const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -1770,7 +2003,7 @@ function renderTradeLog() {
   document.getElementById('log-winrate').textContent      = yourWinRate !== null ? yourWinRate + '%' : '—';
 
   if (!tradeLog.length) {
-    tbody.innerHTML = '<tr><td colspan="11"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14"><div class="no-log">📋 No trades logged yet — confirmed signals will appear here automatically</div></td></tr>';
     return;
   }
 
@@ -1780,31 +2013,53 @@ function renderTradeLog() {
     const dirLabel = isBull ? '▲ LONG' : '▼ SHORT';
     const outcomeClass = t.outcome === 'win' ? 'win' : t.outcome === 'loss' ? 'loss' : t.outcome === 'skip' ? 'skip' : '';
 
+    // Entries logged before this field existed have no entryStatus —
+    // treat those as real confirmed trades (that's all that existed then).
+    const status = t.entryStatus || 'confirmed';
+    const statusHtml = status === 'invalidated'
+      ? `<span style="font-family:var(--mono);font-size:.68rem;color:var(--muted)">❌ INVALIDATED</span>`
+      : status === 'exhausted'
+        ? `<span style="font-family:var(--mono);font-size:.68rem;color:var(--warn)">⏸ HELD BACK</span>`
+        : `<span style="font-family:var(--mono);font-size:.68rem;color:var(--bull)">✅ TRADED</span>`;
+
+    const sizeHtml = t.sizeQty
+      ? `${fmt(t.sizeQty)} ${t.symbol.replace('USDT','')}<br><span style="color:var(--muted);font-size:.68rem">~$${(t.sizeNotional||0).toFixed(2)}${t.sizeLeverage ? ' · ' + t.sizeLeverage.toFixed(1) + 'x' : ''}</span>`
+      : '—';
+
+    // Only a real trade has a bot-checked outcome or manual buttons to set —
+    // an invalidated/held setup was never actually entered, so leave those
+    // columns a plain dash instead of inviting a win/loss tag that never happened.
+    const resultHtml = status === 'confirmed'
+      ? `<span style="font-family:var(--mono);font-size:.76rem;font-weight:700;color:${
+          t.autoOutcome==='win' ? 'var(--bull)' :
+          t.autoOutcome==='loss' ? 'var(--bear)' : 'var(--muted)'}">
+          ${t.autoOutcome==='win' ? '✅ WIN' : t.autoOutcome==='loss' ? '❌ LOSS' : '⏳ OPEN'}
+        </span>`
+      : '<span style="color:var(--muted)">—</span>';
+
+    const buttonsHtml = status === 'confirmed'
+      ? `<div style="display:flex;gap:4px;">
+          <button class="outcome-btn ${t.outcome==='win'?'win':''}" onclick="setOutcome(${t.id},'win')">✅</button>
+          <button class="outcome-btn ${t.outcome==='loss'?'loss':''}" onclick="setOutcome(${t.id},'loss')">❌</button>
+          <button class="outcome-btn ${t.outcome==='skip'?'skip':''}" onclick="setOutcome(${t.id},'skip')">⏭</button>
+        </div>`
+      : '<span style="color:var(--muted)">—</span>';
+
     return `<tr>
       <td style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${t.date}</td>
+      <td>${statusHtml}</td>
       <td style="font-family:var(--mono);font-weight:700;color:var(--bright)">${t.symbol.replace('USDT','')}/USDT</td>
       <td style="font-family:var(--mono);font-weight:700;color:${dirColor};font-size:.76rem">${dirLabel}</td>
       <td style="font-size:.74rem;color:var(--text)">${t.signal1d}</td>
       <td style="font-family:var(--mono)">$${fmt(t.entryPrice)}</td>
       <td style="font-family:var(--mono);color:var(--warn)">${t.tpLevel ? '$'+fmt(t.tpLevel)+' (+'+t.tpGain+'%)' : '—'}</td>
-      <td style="font-family:var(--mono);color:var(--bear)">${t.slLevel ? '$'+fmt(t.slLevel)+' (-'+t.slRisk+'%)'+(t.slTight ? ' 🎯' : '') : '—'}</td>
+      <td style="font-family:var(--mono);color:var(--bear)">${t.slLevel ? '$'+fmt(t.slLevel)+' (-'+t.slRisk+'%)' : '—'}</td>
+      <td style="font-family:var(--mono);color:var(--accent);font-size:.74rem">${sizeHtml}</td>
       <td style="font-family:var(--mono);color:#a78bfa">${t.trailingPct ? t.trailingPct+'%' : '—'}</td>
       <td style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${t.signalAge}</td>
-      <td>
-        <span style="font-family:var(--mono);font-size:.76rem;font-weight:700;color:${
-          t.autoOutcome==='win' ? 'var(--bull)' :
-          t.autoOutcome==='loss' ? 'var(--bear)' : 'var(--muted)'}">
-          ${t.autoOutcome==='win' ? '✅ WIN' : t.autoOutcome==='loss' ? '❌ LOSS' : '⏳ OPEN'}
-        </span>
-      </td>
-      <td>
-        <div style="display:flex;gap:4px;">
-          <button class="outcome-btn ${t.outcome==='win'?'win':''}" onclick="setOutcome(${t.id},'win')">✅</button>
-          <button class="outcome-btn ${t.outcome==='loss'?'loss':''}" onclick="setOutcome(${t.id},'loss')">❌</button>
-          <button class="outcome-btn ${t.outcome==='skip'?'skip':''}" onclick="setOutcome(${t.id},'skip')">⏭</button>
-        </div>
-      </td>
-      <td><input type="text" value="${t.notes||''}" placeholder="Add note..." 
+      <td>${resultHtml}</td>
+      <td>${buttonsHtml}</td>
+      <td><input type="text" value="${t.notes||''}" placeholder="Add note..."
           onchange="saveNote(${t.id},this.value)"
           style="background:transparent;border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:.74rem;width:140px;outline:none;">
       </td>
@@ -1837,9 +2092,13 @@ function renderConfirm() {
     const dirColor = isBull ? 'var(--bull)' : 'var(--bear)';
     const dirLabel = isBull ? '▲ LONG' : '▼ SHORT';
 
-    const statusHtml = r.confirmed
-      ? `<div class="confirm-status status-confirmed">✅ ENTRY CONFIRMED</div>`
-      : `<div class="confirm-status status-unconfirmed"><span class="pulse-dot"></span> ENTRY UNCONFIRMED</div>`;
+    const statusHtml = r.invalidated
+      ? `<div class="confirm-status" style="background:rgba(58,68,85,.25);color:var(--muted);border:1px solid var(--border)">❌ SETUP INVALIDATED</div>`
+      : r.exhausted
+        ? `<div class="confirm-status" style="background:rgba(240,165,0,.1);color:var(--warn);border:1px solid rgba(240,165,0,.25)">⏸ HELD — MOVE EXHAUSTED</div>`
+        : r.confirmed
+          ? `<div class="confirm-status status-confirmed">✅ ENTRY CONFIRMED</div>`
+          : `<div class="confirm-status status-unconfirmed"><span class="pulse-dot"></span> ENTRY UNCONFIRMED</div>`;
 
     // Check if TP already reached
     const currentPrice = r.signal2h ? r.signal2h.closePrice : r.entryPrice;
@@ -1853,11 +2112,15 @@ function renderConfirm() {
       (!isBull && currentPrice <= r.tpLevel)
     );
 
-    const signal2hHtml = r.confirmed && r.signal2h
-      ? `<span class="confirm-2h-badge ${r.signal2h.direction === 'bear' ? 'bear' : ''}">${r.signal2h.label}</span>
-         <span style="font-family:var(--mono);font-size:.75rem;color:var(--text)"> entry at <strong>$${fmt(r.signal2h.closePrice)}</strong></span>
-         <span style="font-family:var(--mono);font-size:.72rem;color:var(--muted)"> · confirmed ${r.signal2h.dateStr}</span>`
-      : `Watching 30min candles for breakout confirmation…`;
+    const signal2hHtml = r.invalidated
+      ? `<span style="color:var(--muted)">A 30min candle closed the wrong way before price ever broke the real signal level — setup dropped, not watched further today.</span>`
+      : r.exhausted
+        ? `<span style="color:var(--warn)">Price already moved ≥${(r.exhaustionPct || RECENT_MOVE_EXHAUSTION_PCT).toFixed(1)}% in the last ~4h (this pair's own volatility-scaled threshold) — holding off entry until the move cools. Will still confirm automatically if it does.</span>`
+        : r.confirmed && r.signal2h
+          ? `<span class="confirm-2h-badge ${r.signal2h.direction === 'bear' ? 'bear' : ''}">${r.signal2h.label}</span>
+             <span style="font-family:var(--mono);font-size:.75rem;color:var(--text)"> entry at <strong>$${fmt(r.signal2h.closePrice)}</strong></span>
+             <span style="font-family:var(--mono);font-size:.72rem;color:var(--muted)"> · confirmed ${r.signal2h.dateStr}</span>`
+          : `Watching 30min candles for breakout confirmation…`;
 
     // Signal age
     const age = r.detectedAt ? getSignalAge(r.detectedAt) : null;
@@ -1878,14 +2141,16 @@ function renderConfirm() {
         : `<div class="confirm-detail" style="margin-top:5px">
              🎯 <span style="color:var(--warn);font-family:var(--mono);font-weight:700">TP Target: $${fmt(r.tpLevel)}</span>
              <span style="color:var(--muted);font-size:.7rem"> (+${r.tpGain}% potential)${r.tpEstimated ? ' · est. range, no clean pivot' : ''}</span>
-             ${r.slLevel ? `<br>🛑 <span style="color:var(--bear);font-family:var(--mono);font-weight:700">Stop Loss: $${fmt(r.slLevel)}</span><span style="color:var(--muted);font-size:.7rem"> (-${r.slRisk}% risk)${r.slTight ? ' · tight stop (prior 30min candle)' : (r.slEstimated ? ' · est.' : '')}</span>` : ''}
+             ${r.slLevel ? `<br>🛑 <span style="color:var(--bear);font-family:var(--mono);font-weight:700">Stop Loss: $${fmt(r.slLevel)}</span><span style="color:var(--muted);font-size:.7rem"> (-${r.slRisk}% risk)${r.slEstimated ? ' · est.' : ''}</span>` : ''}
+             ${r.sizeQty ? `<br>💰 <span style="color:var(--accent);font-family:var(--mono);font-weight:700">Size for $${MAX_RISK_USD} risk: ${fmt(r.sizeQty)} ${r.symbol.replace('USDT','')}</span><span style="color:var(--muted);font-size:.7rem"> (~$${r.sizeNotional ? r.sizeNotional.toFixed(2) : '?'} notional)</span>` : ''}
+             ${r.sizeLeverage ? `<br>⚙️ <span style="color:${r.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? 'var(--bear)' : 'var(--accent)'};font-family:var(--mono);font-weight:700">Leverage on $${MARGIN_PER_TRADE_USD} margin: ${r.sizeLeverage.toFixed(1)}x</span>${r.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? `<span style="color:var(--bear);font-size:.7rem"> ⚠️ SL too tight for this margin — consider skipping or widening stop</span>` : ''}` : ''}
              ${r.trailingPct ? `<br>📌 <span style="color:#a78bfa;font-family:var(--mono);font-weight:700">Trailing Stop: ${r.trailingPct}%</span><span style="color:var(--muted);font-size:.7rem"> (set on Bybit after entry)</span>` : ''}
            </div>`
       : `<div class="confirm-detail" style="margin-top:5px">
            <span style="color:var(--bear);font-size:.72rem">⚠️ No TP/SL levels found — no clean swing pivot in range. Set levels manually before entering.</span>
          </div>`;
 
-    return `<div class="confirm-card ${r.confirmed ? (tpReached ? 'tp-reached' : 'confirmed') : 'unconfirmed'}">
+    return `<div class="confirm-card ${r.invalidated || r.exhausted ? 'unconfirmed' : r.confirmed ? (tpReached ? 'tp-reached' : 'confirmed') : 'unconfirmed'}" style="${r.invalidated ? 'opacity:.55' : ''}">
       <div>
         <div class="confirm-top">
           <span class="confirm-sym">${r.symbol.replace('USDT','')}/USDT</span>
@@ -1894,7 +2159,7 @@ function renderConfirm() {
         </div>
         <div class="confirm-detail" style="margin-top:6px">${signal2hHtml}</div>
         ${ageHtml}
-        ${tpHtml}
+        ${r.invalidated || r.exhausted ? '' : tpHtml}
       </div>
       ${tpReached
         ? `<div class="confirm-status" style="background:rgba(255,69,96,.1);color:var(--bear);border:1px solid rgba(255,69,96,.3)">⚠️ TP REACHED</div>`
@@ -2055,6 +2320,9 @@ function notifyNew() {
   if (now.getUTCHours() === 0 && now.getUTCMinutes() < 60) {
     tgAlertedPairs.clear();
     confirmedAlertedPairs.clear();
+    invalidatedPairs.clear();
+    exhaustedLoggedPairs.clear();
+    saveAlertState();
   }
 }
 
@@ -2094,14 +2362,25 @@ function saveTgQueue(queue) {
 }
 
 // Sends to exactly ONE chat id. Returns true/false, never throws.
+//
+// Uses a GET request with the message in the query string, NOT a POST
+// with a JSON body. A POST with Content-Type: application/json is a
+// "non-simple" cross-origin request, so the browser sends a CORS
+// preflight (OPTIONS) before it — and Telegram's Bot API does not
+// reliably handle that preflight for browser callers, which can make
+// every such call fail silently (caught here, logged to console only,
+// queued) with no visible error unless you have devtools open. A plain
+// GET with no custom headers is a "simple" request — no preflight — so
+// it's the more reliable way to call this API directly from a browser.
+// (I can't verify this from my own sandbox — this network is blocked
+// from reaching api.telegram.org entirely — so please treat this as the
+// best fix I can reason through, and watch whether alerts actually start
+// arriving more reliably after this.)
 async function sendTelegramOne(chatId, message) {
   try {
-    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' })
-    });
+    const params = new URLSearchParams({ chat_id: chatId, text: message, parse_mode: 'HTML' });
+    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage?${params.toString()}`;
+    const res = await fetch(url); // GET, no custom headers — avoids the CORS preflight entirely
     if (res.ok) return true;
     const body = await res.text().catch(() => '');
     console.log('Telegram send FAILED for', chatId, res.status, body);
@@ -2163,6 +2442,18 @@ window.addEventListener('load', () => {
   renderTradeLog();
   // Check any pending trade outcomes on load
   setTimeout(runAutoOutcomeChecks, 3000);
+
+  // ── AUTO-RESUME WATCHING ON LOAD ──
+  // If there's a same-day watchlist saved (built by an earlier scan, in
+  // this tab or a previous one that got refreshed/killed), pick it back
+  // up immediately instead of sitting idle until you notice and click
+  // Scan again. This is the actual fix for alerts "almost never firing."
+  const savedWatchlist = loadWatchlistState();
+  if (savedWatchlist && savedWatchlist.length) {
+    watchlist = savedWatchlist;
+    toast(`👁 Resumed watching ${watchlist.length} pairs from before this page loaded`, 'neutral');
+    beginWatching();
+  }
 });
 
 function showProgress(on) {
