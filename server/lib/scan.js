@@ -345,9 +345,8 @@ async function run2HConfirmation() {
         const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}` : '\n🎯 TP: none found — size manually';
         const slText = item.slLevel ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)${slTag}` : '\n🛑 SL: none found — size manually';
         const levTag = item.sizeLeverage && item.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? ' ⚠️ SL too tight for this margin — consider skipping or a wider stop' : '';
-        const sizeText = item.sizeQty
-          ? `\n💰 Size for $${MAX_RISK_USD} risk: ${fmt(item.sizeQty)} ${item.symbol.replace('USDT', '')} (~$${item.sizeNotional.toFixed(2)} notional)` +
-            (item.sizeLeverage ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage}x${levTag}` : '')
+        const sizeText = item.sizeLeverage
+          ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage}x${levTag}`
           : '';
         const trailingText = item.trailingPct ? `\n📌 Trailing Stop: ${item.trailingPct}% (set on Bybit)` : '';
         const bybitText = bybitResult.placed

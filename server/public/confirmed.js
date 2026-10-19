@@ -66,7 +66,6 @@ function renderConfirmed(list) {
         <span>entry <b>$${fmt(item.entryPrice)}</b></span>
         ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)</span>` : `<span>tp <b>none found</b> — size manually</span>`}
         ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)</span>` : `<span>sl <b>none found</b> — size manually</span>`}
-        ${item.sizeQty ? `<span>size <b>${fmt(item.sizeQty)} ${sym}</b></span>` : ''}
         ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage}x</b></span>` : ''}
         ${item.trailingPct ? `<span>trailing <b>${item.trailingPct}%</b></span>` : `<span>trailing <b>—</b></span>`}
       </div>
