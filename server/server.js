@@ -109,10 +109,15 @@ app.listen(PORT, () => {
     run2HConfirmation().catch(e => console.log('[confirm] error:', e.message));
   }, CONFIRM_INTERVAL_MS);
 
-  // Check pending trade outcomes once an hour.
+  // Check pending trade outcomes — every 10 min, not once an hour. A
+  // Bybit-executed trade (SL, trailing stop, or TP hitting) can close in
+  // minutes, and checking its real outcome is a cheap, targeted API call
+  // (only for symbols still open), so there's no reason to wait an hour
+  // to find out. The candle-replay fallback still only runs after its
+  // original 2h grace period either way.
   setInterval(() => {
     runAutoOutcomeChecks().catch(e => console.log('[tradelog] outcome check error:', e.message));
-  }, 60 * 60 * 1000);
+  }, 10 * 60 * 1000);
 
   // Retry any Telegram alerts that failed on their first attempt — without
   // this, a single transient failure (network blip, Telegram rate-limit)

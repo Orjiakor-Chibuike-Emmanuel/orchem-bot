@@ -438,6 +438,14 @@ a.btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 }
 .out-btn.active.win  { border-color: var(--phosphor); color: var(--phosphor); }
 .out-btn.active.loss { border-color: var(--alarm); color: var(--alarm); }
+.outcome-src {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  align-self: center;
+  margin-left: 2px;
+}
+.outcome-src.real { color: var(--phosphor); }
+.outcome-src.est  { color: var(--steel-dim); font-style: italic; }
 
 /* ── STATS STRIP ── */
 .stats-row {

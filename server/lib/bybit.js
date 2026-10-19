@@ -108,6 +108,23 @@ async function getInstrumentInfo(symbol) {
   return parsed;
 }
 
+// Whether a position is still open RIGHT NOW on the exchange — used to
+// decide whether a logged trade is still "pending" or has actually closed,
+// instead of guessing from replayed candles against stale SL/TP numbers.
+async function getOpenPosition(symbol) {
+  const pos = await getPosition(symbol);
+  return pos && parseFloat(pos.size) > 0 ? pos : null;
+}
+
+// The real, closed result of a position that's no longer open — exit
+// price and realized PnL, straight from Bybit, not inferred from candles.
+async function getClosedPnl(symbol, startTimeMs) {
+  const result = await bybitRequest('GET', '/v5/position/closed-pnl', {
+    category: 'linear', symbol, startTime: String(startTimeMs), limit: '20'
+  });
+  return (result && result.list) || [];
+}
+
 function roundToStep(value, step) {
   if (!step) return value;
   const decimals = (step.toString().split('.')[1] || '').length;
@@ -258,4 +275,4 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
   return { placed: true, orderId: result.orderId, symbol, side, qty: roundedQty, entry: realEntry, tp: finalTp, sl: finalSl, trailing: trailingSet };
 }
 
-module.exports = { AUTO_TRADE, placeOrder, getInstrumentInfo, bybitRequest };
+module.exports = { AUTO_TRADE, placeOrder, getInstrumentInfo, bybitRequest, getOpenPosition, getClosedPnl };

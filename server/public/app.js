@@ -177,15 +177,22 @@ function renderLog(tradeLog) {
     const isBull = t.direction === 'bull';
     const outcome = t.outcome === 'pending' ? (t.autoOutcome === 'win' ? 'win' : t.autoOutcome === 'loss' ? 'loss' : null) : t.outcome;
     const showButtons = t.entryStatus === 'confirmed';
+    // 'bybit' = the real closed result read back from the exchange;
+    // 'candle-estimate' = a guess from replayed candles (only used when
+    // this trade never actually executed on Bybit) — worth knowing which
+    // one you're looking at before trusting the win/loss count.
+    const sourceTag = t.outcomeSource === 'bybit' ? ' <span class="outcome-src real">✓bybit</span>'
+      : t.outcomeSource === 'candle-estimate' ? ' <span class="outcome-src est">est.</span>' : '';
+    const pnlNote = t.actualPnl != null ? ` · ${t.actualPnl >= 0 ? '+' : ''}$${t.actualPnl.toFixed(2)}` : '';
     return `<div class="log-row">
       <span class="log-time">${t.date}</span>
       <span class="log-sym">${t.symbol.replace('USDT', '')}</span>
       <span class="log-dir ${isBull ? 'long' : 'short'}">${isBull ? 'L' : 'S'}</span>
       <span class="log-status ${t.entryStatus}">${t.entryStatus.toUpperCase()}</span>
-      <span class="log-note">${t.signal1d || ''}${t.notes ? ' · ' + t.notes : ''}</span>
+      <span class="log-note">${t.signal1d || ''}${t.notes ? ' · ' + t.notes : ''}${pnlNote}</span>
       ${showButtons ? `<span class="log-outcome">
         <button class="out-btn ${outcome === 'win' ? 'active win' : ''}" onclick="setOutcome(${t.id},'win')">WIN</button>
-        <button class="out-btn ${outcome === 'loss' ? 'active loss' : ''}" onclick="setOutcome(${t.id},'loss')">LOSS</button>
+        <button class="out-btn ${outcome === 'loss' ? 'active loss' : ''}" onclick="setOutcome(${t.id},'loss')">LOSS</button>${sourceTag}
       </span>` : '<span></span>'}
     </div>`;
   }).join('');
