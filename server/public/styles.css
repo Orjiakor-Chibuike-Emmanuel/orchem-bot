@@ -183,6 +183,63 @@ a { color: var(--phosphor); text-decoration: none; }
   font-size: 0.72rem;
   color: var(--steel-dim);
 }
+.nameplate-confirmed { border-bottom-color: var(--phosphor); }
+.nameplate-confirmed .nameplate-title { color: var(--phosphor); }
+.nameplate-confirmed .nameplate-count {
+  color: var(--bg);
+  background: var(--phosphor);
+  padding: 1px 7px;
+  font-weight: 700;
+}
+
+/* ── CONFIRMED SIGNALS PANEL — a persistent, always-visible section so a
+   confirmed trade can't be missed by scrolling past a color change in the
+   middle of a long watchlist. ── */
+.confirmed-card {
+  background: var(--panel);
+  border: 1px solid var(--phosphor);
+  box-shadow: 0 0 0 1px rgba(92,255,149,0.15), 0 0 16px rgba(92,255,149,0.12);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.confirmed-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.confirmed-card-name {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--paper);
+}
+.confirmed-card-when {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--steel);
+}
+.confirmed-card-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--steel);
+}
+.confirmed-card-grid b { color: var(--paper); }
+.confirmed-card-bybit {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+}
+.confirmed-card-bybit.placed  { color: var(--phosphor); }
+.confirmed-card-bybit.failed  { color: var(--alarm); }
+.confirmed-card-bybit.skipped { color: var(--steel-dim); }
 
 /* ── CHANNEL STRIPS (one per watched pair) ── */
 .channel {

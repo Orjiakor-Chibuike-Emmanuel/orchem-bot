@@ -20,7 +20,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
-const SCAN_INTERVAL_MS = parseInt(process.env.SCAN_INTERVAL_MS || '3600000', 10); // 1 hour
+const SCAN_INTERVAL_MS = parseInt(process.env.SCAN_INTERVAL_MS || '1800000', 10); // 30 min — matches the 30min confirmation candle, so a fresh 1D signal doesn't sit unseen for up to an hour before it's even on the watchlist
 const CONFIRM_INTERVAL_MS = parseInt(process.env.CONFIRM_INTERVAL_MS || '300000', 10); // 5 min
 
 /* ═══════════════════════════════════════

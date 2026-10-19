@@ -90,7 +90,8 @@ function renderChannel(item, idx) {
        ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)</span>` : ''}
        ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)</span>` : ''}
        ${item.sizeQty ? `<span>size <b>${fmt(item.sizeQty)}</b></span>` : ''}
-       ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage.toFixed(1)}x</b></span>` : ''}`
+       ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage}x</b></span>` : ''}
+       ${item.trailingPct ? `<span>trailing <b>${item.trailingPct}%</b></span>` : ''}`
     : `<span>${item.signal1d || ''}</span>`;
 
   return `<div class="channel ${cls} ${isNew ? 'fresh-confirm' : ''}">
@@ -109,6 +110,59 @@ function renderChannel(item, idx) {
       <span class="age-readout">${timeAgo(item.detectedAt)}</span>
     </div>
   </div>`;
+}
+
+/* ── CONFIRMED SIGNALS PANEL ──
+   A persistent section, separate from the scrolling watchlist, so a
+   confirmed trade can't be missed just because its border color changed
+   somewhere in a long list. Shows the confirmation timestamp (so the
+   candle can be found and traded manually too) and what Bybit did. */
+function renderConfirmed(list) {
+  const section = document.getElementById('confirmed-section');
+  const confirmed = (list || []).filter(item => item.confirmed && !item.invalidated);
+
+  if (!confirmed.length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  document.getElementById('confirmed-count').textContent = confirmed.length;
+
+  document.getElementById('confirmed-list').innerHTML = confirmed.map(item => {
+    const isBull = item.direction === 'bull';
+    const whenAbs = item.confirmedAt ? new Date(item.confirmedAt).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+    }) : (item.signal2h && item.signal2h.dateStr) || '—';
+    const whenAgo = item.confirmedAt ? timeAgo(item.confirmedAt) : '';
+
+    const r = item.bybitResult || {};
+    const bybitCls = r.placed ? 'placed' : r.error ? 'failed' : 'skipped';
+    const bybitLine = r.placed
+      ? `🤖 Bybit Demo: order placed — qty ${r.qty}, SL $${r.sl}${r.tp ? `, TP $${r.tp}` : ''}`
+      : r.error
+        ? `🤖 Bybit Demo: FAILED — ${r.reason}`
+        : r.reason
+          ? `🤖 Bybit Demo: ${r.reason}`
+          : '';
+
+    return `<div class="confirmed-card">
+      <div class="confirmed-card-top">
+        <span class="confirmed-card-name">${item.symbol.replace('USDT', '')}/USDT
+          <span class="dir-tag ${isBull ? 'long' : 'short'}">${isBull ? 'LONG' : 'SHORT'}</span>
+        </span>
+        <span class="confirmed-card-when">confirmed ${whenAbs}${whenAgo ? ` (${whenAgo})` : ''}</span>
+      </div>
+      <div class="confirmed-card-grid">
+        <span>entry <b>$${fmt(item.entryPrice)}</b></span>
+        ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)</span>` : ''}
+        ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)</span>` : ''}
+        ${item.sizeQty ? `<span>size <b>${fmt(item.sizeQty)}</b></span>` : ''}
+        ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage}x</b></span>` : ''}
+        ${item.trailingPct ? `<span>trailing <b>${item.trailingPct}%</b></span>` : ''}
+      </div>
+      ${bybitLine ? `<div class="confirmed-card-bybit ${bybitCls}">${bybitLine}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 function renderChannels(watchlist) {
@@ -203,7 +257,9 @@ async function poll() {
 
     // Prefer confirmResults — it carries the live confirmed/invalidated/
     // exhausted flags; watchlist alone is only the raw pre-confirmation list.
-    renderChannels(data.confirmResults && data.confirmResults.length ? data.confirmResults : data.watchlist || []);
+    const list = data.confirmResults && data.confirmResults.length ? data.confirmResults : data.watchlist || [];
+    renderConfirmed(list);
+    renderChannels(list);
     renderLog(data.tradeLog || []);
   } catch (e) {
     const text = document.getElementById('status-text');

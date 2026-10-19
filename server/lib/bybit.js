@@ -102,7 +102,9 @@ function roundToStep(value, step) {
 // aborting the trade over.
 async function setLeverage(symbol, leverage) {
   try {
-    const lev = String(Math.max(1, Math.round(leverage)));
+    // Floor, never round up — same reasoning as the dashboard figure:
+    // understating leverage is the safe direction to be wrong in.
+    const lev = String(Math.max(1, Math.floor(leverage)));
     await bybitRequest('POST', '/v5/position/set-leverage', {
       category: 'linear', symbol, buyLeverage: lev, sellLeverage: lev
     });

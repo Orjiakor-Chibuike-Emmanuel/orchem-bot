@@ -282,10 +282,21 @@ async function run2HConfirmation() {
         if (sizing) {
           item.sizeQty = sizing.qty;
           item.sizeNotional = sizing.notional;
-          item.sizeLeverage = sizing.leverage;
+          // Floor, never round up — a rounded-up leverage figure understates
+          // the risk you'd actually be taking on, which is the wrong
+          // direction to be wrong in. 8.9x floors to 8x, not 9x.
+          item.sizeLeverage = Math.floor(sizing.leverage);
         } else {
           item.sizeQty = item.sizeNotional = item.sizeLeverage = null;
         }
+
+        // The watchlist's entryPrice was only ever the 1D signal's close —
+        // a placeholder from before confirmation. Once confirmed, the real
+        // entry is this 30min candle's close. Overwriting it here is what
+        // makes the dashboard (and the trade log) show the actual entry
+        // instead of a stale earlier price.
+        item.entryPrice = entryPrice;
+        item.confirmedAt = result2h.confirmTime + (30 * 60 * 1000); // candle CLOSE time, not open
 
         logTrade(item, result2h);
 
@@ -319,7 +330,7 @@ async function run2HConfirmation() {
         const levTag = item.sizeLeverage && item.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? ' ⚠️ SL too tight for this margin — consider skipping or a wider stop' : '';
         const sizeText = item.sizeQty
           ? `\n💰 Size for $${MAX_RISK_USD} risk: ${fmt(item.sizeQty)} ${item.symbol.replace('USDT', '')} (~$${item.sizeNotional.toFixed(2)} notional)` +
-            (item.sizeLeverage ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage.toFixed(1)}x${levTag}` : '')
+            (item.sizeLeverage ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage}x${levTag}` : '')
           : '';
         const trailingText = item.trailingPct ? `\n📌 Trailing Stop: ${item.trailingPct}% (set on Bybit)` : '';
         const bybitText = bybitResult.placed
