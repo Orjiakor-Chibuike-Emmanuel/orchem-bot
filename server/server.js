@@ -85,6 +85,15 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
 
+// Self-diagnostic for "no Telegram notifications" — actually sends a test
+// message and reports back exactly what happened (missing token/recipient
+// env vars, a Telegram API error, a network error), instead of a log line
+// you can't see. Open this URL directly in a browser or curl it.
+app.get('/api/test-telegram', async (req, res) => {
+  const result = await require('./lib/telegram').testSend();
+  res.json(result);
+});
+
 /* ═══════════════════════════════════════
    BOOT
 ═══════════════════════════════════════ */

@@ -75,4 +75,41 @@ async function flushTgQueue() {
   stateMod.save();
 }
 
-module.exports = { sendTelegram, sendTelegramOne, flushTgQueue, TG_RECIPIENTS };
+// Diagnostic — actually tries to send a real message and reports exactly
+// what happened for each recipient, instead of just a log line nobody can
+// see. Hit /api/test-telegram to self-diagnose: missing token, missing
+// recipients, a bad chat ID, or "Forbidden" (the bot's never been started
+// by that chat — Telegram won't deliver to a chat that hasn't messaged
+// the bot first) all come back as a specific, readable reason here.
+async function testSend() {
+  if (!TG_TOKEN) return { ok: false, reason: 'TG_TOKEN is not set on this deploy' };
+  if (!TG_RECIPIENTS.length) return { ok: false, reason: 'TG_RECIPIENTS is not set on this deploy' };
+
+  const results = [];
+  for (const chatId of TG_RECIPIENTS) {
+    try {
+      const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: '✅ Orchem Bot test message — if this reached you, Telegram delivery to this chat is working.'
+        }),
+        signal: AbortSignal.timeout(10000)
+      });
+      const body = await res.json().catch(() => ({}));
+      results.push({
+        chatId,
+        ok: res.ok,
+        httpStatus: res.status,
+        telegramError: body.description || null
+      });
+    } catch (e) {
+      results.push({ chatId, ok: false, networkError: e.message });
+    }
+  }
+  return { ok: results.every(r => r.ok), tokenConfigured: true, recipients: TG_RECIPIENTS, results };
+}
+
+module.exports = { sendTelegram, sendTelegramOne, flushTgQueue, testSend, TG_RECIPIENTS };
