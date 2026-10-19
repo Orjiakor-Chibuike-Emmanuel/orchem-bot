@@ -330,7 +330,8 @@ async function run2HConfirmation() {
             entryPrice,
             tpLevel: item.tpLevel,
             slLevel: item.slLevel,
-            leverage: item.sizeLeverage
+            leverage: item.sizeLeverage,
+            trailingPct: item.trailingPct
           });
         } catch (e) {
           bybitResult = { error: true, reason: e.message };
@@ -364,7 +365,14 @@ async function run2HConfirmation() {
         const sizeText = item.sizeLeverage
           ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage}x${levTag}`
           : '';
-        const trailingText = item.trailingPct ? `\n📌 Trailing Stop: ${item.trailingPct}% (set on Bybit)` : '';
+        // Only claim it's live on Bybit when bybitResult actually confirms
+        // the trailingStop call succeeded — a suggested % with no exchange
+        // confirmation is not "set on Bybit", it's just a number.
+        const trailingText = bybitResult.trailing
+          ? `\n📌 Trailing Stop: $${bybitResult.trailing} (${item.trailingPct}%, active from entry — set on Bybit)`
+          : item.trailingPct
+            ? `\n📌 Suggested trailing: ${item.trailingPct}% (not applied automatically — set manually)`
+            : '';
         const bybitText = bybitResult.placed
           ? `\n🤖 Bybit Demo: order placed (qty ${bybitResult.qty}, SL $${bybitResult.sl}${bybitResult.tp ? `, TP $${bybitResult.tp}` : ''})`
           : bybitResult.error

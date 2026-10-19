@@ -48,12 +48,19 @@ function renderConfirmed(list) {
     const r = item.bybitResult || {};
     const bybitCls = r.placed ? 'placed' : r.error ? 'failed' : 'skipped';
     const bybitLine = r.placed
-      ? `🤖 Bybit Demo: order placed — qty ${r.qty} ${sym}, SL $${r.sl}${r.tp ? `, TP $${r.tp}` : ' (no TP set)'}`
+      ? `🤖 Bybit Demo: order placed — qty ${r.qty} ${sym}, SL $${r.sl}${r.tp ? `, TP $${r.tp}` : ' (no TP set)'}${r.trailing ? `, trailing $${r.trailing}` : ''}`
       : r.error
         ? `🤖 Bybit Demo: FAILED — ${r.reason}`
         : r.reason
           ? `🤖 Bybit Demo: ${r.reason}`
           : '';
+    // Only call it "active" when Bybit actually confirmed the trailing
+    // call — otherwise it's just the suggested % the bot computed.
+    const trailingCell = r.trailing
+      ? `<span>trailing <b>$${fmt(r.trailing)}</b> (${item.trailingPct}%, active)</span>`
+      : item.trailingPct
+        ? `<span>trailing <b>${item.trailingPct}%</b> (suggested, not set)</span>`
+        : `<span>trailing <b>—</b></span>`;
 
     return `<div class="confirmed-card">
       <div class="confirmed-card-top">
@@ -67,7 +74,7 @@ function renderConfirmed(list) {
         ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)</span>` : `<span>tp <b>none found</b> — size manually</span>`}
         ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)</span>` : `<span>sl <b>none found</b> — size manually</span>`}
         ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage}x</b></span>` : ''}
-        ${item.trailingPct ? `<span>trailing <b>${item.trailingPct}%</b></span>` : `<span>trailing <b>—</b></span>`}
+        ${trailingCell}
       </div>
       ${bybitLine ? `<div class="confirmed-card-bybit ${bybitCls}">${bybitLine}</div>` : ''}
     </div>`;

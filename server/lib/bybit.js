@@ -82,10 +82,11 @@ async function getPosition(symbol) {
   return result && result.list && result.list[0];
 }
 
-async function updateTradingStop(symbol, { stopLoss, takeProfit }) {
+async function updateTradingStop(symbol, { stopLoss, takeProfit, trailingStop }) {
   const params = { category: 'linear', symbol, tpslMode: 'Full', positionIdx: 0 };
   if (stopLoss) params.stopLoss = String(stopLoss);
   if (takeProfit) params.takeProfit = String(takeProfit);
+  if (trailingStop) params.trailingStop = String(trailingStop);
   await bybitRequest('POST', '/v5/position/trading-stop', params);
 }
 
@@ -134,7 +135,7 @@ async function setLeverage(symbol, leverage) {
 // Opens a market position with TP/SL attached in the same request (Bybit's
 // "Full" tpslMode — simpler and more reliable than separate conditional
 // orders, and avoids a window where the position is open with no stop).
-async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel, leverage }) {
+async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel, leverage, trailingPct }) {
   if (!AUTO_TRADE) return { skipped: true, reason: 'BYBIT_AUTO_TRADE is off' };
   if (!API_KEY || !API_SECRET) return { skipped: true, reason: 'Bybit API keys not configured' };
   if (!slLevel) return { skipped: true, reason: 'no stop-loss level — refusing to open a position with no stop' };
@@ -190,17 +191,13 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
 
   // A MARKET order fills at whatever the live price is, not the
   // confirmation-candle close we estimated when sizing this trade — on a
-  // fast-moving breakout the two can differ by a meaningful amount. The
-  // SL/TP just submitted are FIXED prices computed against our estimate,
-  // so if the fill is materially different, the real distance from entry
-  // to stop (and therefore the real dollar risk) no longer matches what
-  // qty was sized for. Re-read the actual average entry and re-anchor
-  // SL/TP to it, preserving the same price distance from entry — that
-  // keeps the dollar risk close to what qty was built for, instead of
-  // leaving a stop that was correct for a price we never actually got.
+  // fast-moving breakout the two can differ by a meaningful amount. Read
+  // back the actual average entry so SL/TP (and the trailing distance
+  // below) can be anchored to where we really got in, not the estimate.
   let realEntry = entryPrice;
   let finalSl = roundedSl;
   let finalTp = roundedTp;
+  let trailingSet = null;
   try {
     let pos = null;
     for (let i = 0; i < 4; i++) {
@@ -209,8 +206,14 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
       if (pos && parseFloat(pos.avgPrice) > 0) break;
     }
     const avgPrice = pos && parseFloat(pos.avgPrice);
-    if (avgPrice && Math.abs(avgPrice - entryPrice) > info.tickSize) {
-      realEntry = avgPrice;
+    if (avgPrice) realEntry = avgPrice;
+
+    const priceShifted = avgPrice && Math.abs(avgPrice - entryPrice) > info.tickSize;
+    if (priceShifted) {
+      // Fill landed away from our estimate — re-anchor SL/TP to the real
+      // entry, preserving the same price distance (so the dollar risk
+      // tracks back close to what qty was built for) rather than leaving
+      // a stop that was only correct for a price we never actually got.
       const slDistance = Math.abs(entryPrice - slLevel);
       finalSl = roundToStep(
         direction === 'bull' ? realEntry - slDistance : realEntry + slDistance,
@@ -223,14 +226,36 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
           info.tickSize
         );
       }
-      await updateTradingStop(symbol, { stopLoss: finalSl, takeProfit: finalTp });
-      console.log(`[bybit] re-anchored ${symbol} SL/TP to actual fill $${realEntry} (estimated $${entryPrice}) — SL now $${finalSl}${finalTp ? `, TP $${finalTp}` : ''}`);
+    }
+
+    const updatePayload = { stopLoss: finalSl, takeProfit: finalTp };
+
+    // Trailing stop — a price DISTANCE (not a %), activating immediately
+    // from the real entry per the chosen behavior: no activation price
+    // set, so Bybit starts tracking the best price reached from the
+    // moment this call lands, not after the trade is already in profit.
+    if (trailingPct && trailingPct > 0) {
+      const trailingDistance = roundToStep(realEntry * (trailingPct / 100), info.tickSize);
+      if (trailingDistance > 0) {
+        updatePayload.trailingStop = trailingDistance;
+        trailingSet = trailingDistance;
+      }
+    }
+
+    if (priceShifted || trailingSet) {
+      await updateTradingStop(symbol, updatePayload);
+      if (priceShifted) {
+        console.log(`[bybit] re-anchored ${symbol} SL/TP to actual fill $${realEntry} (estimated $${entryPrice}) — SL now $${finalSl}${finalTp ? `, TP $${finalTp}` : ''}`);
+      }
+      if (trailingSet) {
+        console.log(`[bybit] trailing stop set for ${symbol}: $${trailingSet} (${trailingPct}%) from entry $${realEntry}`);
+      }
     }
   } catch (e) {
-    console.log(`[bybit] could not re-anchor SL/TP to actual fill for ${symbol} — stop stays at the pre-trade estimate:`, e.message);
+    console.log(`[bybit] could not re-anchor SL/TP or set trailing stop for ${symbol} — stop stays at the pre-trade estimate, no trailing:`, e.message);
   }
 
-  return { placed: true, orderId: result.orderId, symbol, side, qty: roundedQty, entry: realEntry, tp: finalTp, sl: finalSl };
+  return { placed: true, orderId: result.orderId, symbol, side, qty: roundedQty, entry: realEntry, tp: finalTp, sl: finalSl, trailing: trailingSet };
 }
 
 module.exports = { AUTO_TRADE, placeOrder, getInstrumentInfo, bybitRequest };
