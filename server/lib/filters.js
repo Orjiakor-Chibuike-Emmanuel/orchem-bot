@@ -2,7 +2,7 @@
    RECENT-MOVE EXHAUSTION FILTER + TIGHT SL +
    POSITION SIZING — ported from index-v15.html
 ═══════════════════════════════════════ */
-const { apiFetch, safeJson, BINANCE } = require('./binance');
+const { apiFetch, safeJson, BINANCE, RateLimitError } = require('./binance');
 
 const RECENT_MOVE_LOOKBACK_CANDLES = 8; // 8 x 30min = last ~4 hours
 const RECENT_MOVE_EXHAUSTION_PCT = 10;  // flat fallback only
@@ -23,7 +23,8 @@ async function calcPairExhaustionThreshold(symbol) {
     const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
     const scaled = avgRange * EXHAUSTION_VOLATILITY_MULTIPLIER;
     return Math.min(EXHAUSTION_PCT_CEILING, Math.max(EXHAUSTION_PCT_FLOOR, scaled));
-  } catch (_) {
+  } catch (e) {
+    if (e instanceof RateLimitError) throw e;
     return RECENT_MOVE_EXHAUSTION_PCT;
   }
 }
@@ -79,7 +80,8 @@ async function calcSuggestedTrailing(symbol) {
     const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
     const suggested = Math.max(0.5, (avgRange * 1.5)).toFixed(1);
     return parseFloat(suggested);
-  } catch (_) {
+  } catch (e) {
+    if (e instanceof RateLimitError) throw e;
     return null;
   }
 }

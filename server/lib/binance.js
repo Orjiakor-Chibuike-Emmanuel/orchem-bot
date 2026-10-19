@@ -8,13 +8,32 @@
 ═══════════════════════════════════════ */
 const BINANCE = 'https://fapi.binance.com';
 
+// Thrown instead of returning null for 418/429 — these mean Binance has
+// rate-limited or banned this IP, and the right response is to STOP
+// sending requests immediately (hammering through a ban only extends it,
+// up to 3 days for repeat offenses), not to keep looping over the rest
+// of the symbol list getting instant 418s back for each one.
+class RateLimitError extends Error {
+  constructor(status, retryAfterSec) {
+    super(`Binance rate limit (${status}), retry after ${retryAfterSec}s`);
+    this.status = status;
+    this.retryAfterSec = retryAfterSec;
+  }
+}
+
 async function apiFetch(url) {
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(9000) });
     if (r.ok) return r;
+    if (r.status === 418 || r.status === 429) {
+      const retryAfterSec = parseInt(r.headers.get('retry-after') || '120', 10);
+      console.log(`[binance] ${r.status} rate-limit/ban response — backing off ${retryAfterSec}s before any further requests`);
+      throw new RateLimitError(r.status, retryAfterSec);
+    }
     console.log(`[binance] non-OK response ${r.status} for ${url}`);
     return null;
   } catch (e) {
+    if (e instanceof RateLimitError) throw e;
     console.log(`[binance] fetch error for ${url}:`, e.message);
     return null;
   }
@@ -75,4 +94,4 @@ async function fetch2HKlines(symbol, sinceTimestamp) {
   };
 }
 
-module.exports = { BINANCE, apiFetch, safeJson, fetchSymbols, fetchKlines, fetch2HKlines };
+module.exports = { BINANCE, apiFetch, safeJson, fetchSymbols, fetchKlines, fetch2HKlines, RateLimitError };

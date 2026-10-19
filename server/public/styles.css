@@ -125,6 +125,7 @@ a { color: var(--phosphor); text-decoration: none; }
 
 .led.on-green  { background: var(--phosphor); box-shadow: 0 0 8px var(--phosphor); animation: pulse 2s infinite; }
 .led.on-blue   { background: var(--idle-blue); box-shadow: 0 0 6px var(--idle-blue); }
+.led.on-red    { background: var(--alarm); box-shadow: 0 0 8px var(--alarm); animation: pulse 1s infinite; }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }

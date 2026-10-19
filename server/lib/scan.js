@@ -10,7 +10,7 @@
    on any browser tab, phone, or device at all.
 ═══════════════════════════════════════ */
 const stateMod = require('./state');
-const { fetchSymbols, fetchKlines, fetch2HKlines } = require('./binance');
+const { fetchSymbols, fetchKlines, fetch2HKlines, RateLimitError } = require('./binance');
 const {
   analyseSymbol, analyse2H, findSwingLevels, resolveTP, resolveSL
 } = require('./boundary');
@@ -30,9 +30,37 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let scanning = false;
 
+// Binance bans an IP (HTTP 418) for a while — 2 minutes up to 3 days for
+// repeat offenders — if it sees requests coming in too fast. Once banned,
+// every further request gets an instant 418, and continuing to send them
+// only extends the ban. So: track the ban here, and refuse to start any
+// new scan/confirmation cycle until it's over.
+function isBanned() {
+  return !!(stateMod.state.bannedUntil && Date.now() < stateMod.state.bannedUntil);
+}
+
+function bannedSecondsLeft() {
+  return Math.max(0, Math.ceil((stateMod.state.bannedUntil - Date.now()) / 1000));
+}
+
+function registerBan(retryAfterSec) {
+  const ms = Math.max(retryAfterSec || 120, 60) * 1000;
+  const until = Date.now() + ms;
+  // Only ever extend, never shorten, in case two calls race.
+  if (!stateMod.state.bannedUntil || until > stateMod.state.bannedUntil) {
+    stateMod.state.bannedUntil = until;
+    stateMod.save();
+  }
+  console.log(`[scan] Binance rate-limited/banned this IP — pausing ALL Binance requests until ${new Date(stateMod.state.bannedUntil).toISOString()}`);
+}
+
 async function startScan() {
   if (scanning) {
     console.log('[scan] already running, skipping overlapping scan');
+    return;
+  }
+  if (isBanned()) {
+    console.log(`[scan] skipping — Binance ban still in effect for ${bannedSecondsLeft()}s`);
     return;
   }
   scanning = true;
@@ -50,7 +78,13 @@ async function startScan() {
     const total = symbols.length;
     console.log(`[scan] scanning ${total} pairs...`);
 
-    const BATCH = 10;
+    // Paced deliberately slow: Binance futures gives an IP a 2400
+    // request-weight/min budget, but it also bans IPs that burst through
+    // hundreds of requests in a few seconds even if the total weight is
+    // within budget. 4 requests every 800ms (~5/sec, ~300 req/min) stays
+    // well clear of both the weight budget and that burst detection.
+    const BATCH = 4;
+    const BATCH_DELAY_MS = 800;
     for (let i = 0; i < total; i += BATCH) {
       const batch = symbols.slice(i, i + BATCH);
       await Promise.all(batch.map(async sym => {
@@ -59,9 +93,11 @@ async function startScan() {
           const { engulf, aux } = analyseSymbol(sym, klines);
           if (engulf) engulfResults.push(engulf);
           if (aux) auxResults.push(aux);
-        } catch (_) {}
+        } catch (e) {
+          if (e instanceof RateLimitError) throw e;
+        }
       }));
-      await sleep(120);
+      await sleep(BATCH_DELAY_MS);
     }
 
     const seenEngulf = new Set();
@@ -131,7 +167,11 @@ async function startScan() {
       await run2HConfirmation();
     }
   } catch (e) {
-    console.log('[scan] error:', e.message);
+    if (e instanceof RateLimitError) {
+      registerBan(e.retryAfterSec);
+    } else {
+      console.log('[scan] error:', e.message);
+    }
   }
 
   stateMod.state.status = 'IDLE';
@@ -140,12 +180,17 @@ async function startScan() {
 }
 
 async function run2HConfirmation() {
+  if (isBanned()) {
+    console.log(`[confirm] skipping — Binance ban still in effect for ${bannedSecondsLeft()}s`);
+    return;
+  }
   const watchlist = stateMod.state.watchlist;
   if (!watchlist.length) return;
 
   const sets = stateMod.alertSets();
   const confirmResults = [];
 
+  try {
   for (const item of watchlist) {
     if (item.invalidated) {
       confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: item.entryPrice });
@@ -206,7 +251,9 @@ async function run2HConfirmation() {
             confirmTp = resolveTP(entryPrice, freshLevels, freshClosed, item.direction);
             confirmSl = resolveSL(entryPrice, freshLevels, freshClosed, item.direction);
           }
-        } catch (_) {}
+        } catch (e) {
+          if (e instanceof RateLimitError) throw e;
+        }
 
         const tightSl = tightStopLevel(entryPrice, result2h.priorCandle, item.direction);
         if (tightSl) confirmSl = tightSl;
@@ -269,9 +316,17 @@ async function run2HConfirmation() {
         currentPrice: latestPrice
       });
     } catch (e) {
+      if (e instanceof RateLimitError) throw e;
       confirmResults.push({ ...item, confirmed: false, signal2h: null });
     }
     await sleep(80);
+  }
+  } catch (e) {
+    if (e instanceof RateLimitError) {
+      registerBan(e.retryAfterSec);
+    } else {
+      console.log('[confirm] error:', e.message);
+    }
   }
 
   stateMod.state.watchlist = watchlist; // mutated in place (alerted/invalidated flags)

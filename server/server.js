@@ -30,8 +30,11 @@ const CONFIRM_INTERVAL_MS = parseInt(process.env.CONFIRM_INTERVAL_MS || '300000'
 // Full dashboard state in one call: watchlist + confirm results + recent
 // trade log + bot status. The frontend polls this.
 app.get('/api/state', (req, res) => {
+  const bannedUntil = stateMod.state.bannedUntil;
+  const bannedMsLeft = bannedUntil ? Math.max(0, bannedUntil - Date.now()) : 0;
   res.json({
-    status: stateMod.state.status,
+    status: bannedMsLeft > 0 ? 'BANNED' : stateMod.state.status,
+    bannedMsLeft,
     lastScan: stateMod.state.lastScan,
     nextScanIn: stateMod.state.lastScan ? Math.max(0, SCAN_INTERVAL_MS - (Date.now() - stateMod.state.lastScan)) : null,
     engulfResults: stateMod.state.engulfResults || [],
