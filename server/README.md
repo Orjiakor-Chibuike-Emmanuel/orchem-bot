@@ -35,6 +35,37 @@ scanning and sending Telegram alerts as long as the Render service is up.
   sending — runs on the server whether or not anyone has the dashboard
   open.
 
+## Bybit Demo Trading auto-execution (optional)
+
+Set `BYBIT_API_KEY`, `BYBIT_API_SECRET`, and `BYBIT_AUTO_TRADE=true` and the
+bot will, on every confirmed entry, automatically open the matching market
+position on **Bybit's Demo Trading account** — a real feature of Bybit's
+API, completely separate from their live account and live API domain. A
+key generated under Demo Trading physically cannot place a live order,
+even if something here were misconfigured.
+
+What happens on a confirmed entry when this is on:
+- Opens a `Market` order on Bybit's linear USDT-perpetual market for the
+  same symbol/direction the signal fired on.
+- Attaches the stop-loss and take-profit from the signal directly on the
+  order (Bybit's "Full" TP/SL mode) — never opens a position with no stop.
+- Position size and leverage come from the same `MAX_RISK_USD`/
+  `MARGIN_PER_TRADE_USD` math as the Telegram alert, rounded to whatever
+  quantity step Bybit requires for that symbol.
+- The Telegram alert always still goes out, with a line added reporting
+  what Bybit did (placed / skipped / failed and why) — this never replaces
+  the alert, only adds to it.
+
+This stays OFF by default (`BYBIT_AUTO_TRADE` unset or anything but the
+literal string `"true"`), even with API keys present — it's an explicit
+opt-in, not automatic.
+
+**What I could not verify from here:** same sandbox network restriction as
+Binance/Telegram below — I built this against Bybit's documented V5 API
+request/response shapes but could not place a real demo order to confirm
+end-to-end. Watch the Telegram alert text (or Render logs for `[bybit]`
+lines) after the first confirmed signal to confirm it actually placed.
+
 ## Before you deploy: what I could NOT test from here
 
 This was built and syntax-checked in a sandboxed environment whose

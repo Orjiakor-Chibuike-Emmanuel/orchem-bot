@@ -19,6 +19,7 @@ const {
   calcPositionSize, calcSuggestedTrailing, RECENT_MOVE_EXHAUSTION_PCT
 } = require('./filters');
 const { sendTelegram } = require('./telegram');
+const bybit = require('./bybit');
 const { fmt, logTrade } = require('./tradelog');
 const { calcRR } = require('./boundary');
 
@@ -288,6 +289,29 @@ async function run2HConfirmation() {
 
         logTrade(item, result2h);
 
+        // Auto-execute on Bybit Demo Trading — no-ops (returns
+        // {skipped: true, reason}) unless BYBIT_AUTO_TRADE=true and keys
+        // are set, so this is silent and harmless when auto-trading is off.
+        // A Bybit failure here must never break the confirmation loop or
+        // stop the Telegram alert from going out — it's reported IN the
+        // alert, not instead of it.
+        let bybitResult = { skipped: true, reason: 'auto-trading off' };
+        try {
+          bybitResult = await bybit.placeOrder({
+            symbol: item.symbol,
+            direction: item.direction,
+            qty: item.sizeQty,
+            entryPrice,
+            tpLevel: item.tpLevel,
+            slLevel: item.slLevel,
+            leverage: item.sizeLeverage
+          });
+        } catch (e) {
+          bybitResult = { error: true, reason: e.message };
+          console.log(`[bybit] order failed for ${item.symbol}:`, e.message);
+        }
+        item.bybitResult = bybitResult;
+
         const tpTag = item.tpEstimated ? ' ⚠️est.' : '';
         const slTag = item.slEstimated ? ' ⚠️est.' : '';
         const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}` : '\n🎯 TP: none found — size manually';
@@ -298,6 +322,11 @@ async function run2HConfirmation() {
             (item.sizeLeverage ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage.toFixed(1)}x${levTag}` : '')
           : '';
         const trailingText = item.trailingPct ? `\n📌 Trailing Stop: ${item.trailingPct}% (set on Bybit)` : '';
+        const bybitText = bybitResult.placed
+          ? `\n🤖 Bybit Demo: order placed (qty ${bybitResult.qty}, SL $${bybitResult.sl}${bybitResult.tp ? `, TP $${bybitResult.tp}` : ''})`
+          : bybitResult.error
+            ? `\n🤖 Bybit Demo: FAILED — ${bybitResult.reason} (manual entry needed)`
+            : (bybit.AUTO_TRADE ? `\n🤖 Bybit Demo: skipped — ${bybitResult.reason}` : '');
         sets.tg.add(item.symbol);
         stateMod.saveAlertSets(sets);
         const tgMsg = `${dirEmoji} <b>ENTRY CONFIRMED</b>\n`
@@ -305,7 +334,7 @@ async function run2HConfirmation() {
           + `Signal: ${item.signal1d}\n`
           + `Confirmation: ${result2h.label}\n`
           + `Entry: $${fmt(entryPrice)} · ${result2h.dateStr}`
-          + tpText + slText + sizeText + trailingText;
+          + tpText + slText + sizeText + trailingText + bybitText;
         await sendTelegram(tgMsg);
       }
 
