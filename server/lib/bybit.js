@@ -73,6 +73,22 @@ async function bybitRequest(method, path, params = {}) {
   return data.result;
 }
 
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function getPosition(symbol) {
+  const result = await bybitRequest('GET', '/v5/position/list', { category: 'linear', symbol });
+  return result && result.list && result.list[0];
+}
+
+async function updateTradingStop(symbol, { stopLoss, takeProfit }) {
+  const params = { category: 'linear', symbol, tpslMode: 'Full', positionIdx: 0 };
+  if (stopLoss) params.stopLoss = String(stopLoss);
+  if (takeProfit) params.takeProfit = String(takeProfit);
+  await bybitRequest('POST', '/v5/position/trading-stop', params);
+}
+
 // Instrument filters (qty step, min qty, price tick) rarely change — cache
 // per process lifetime instead of fetching before every single order.
 const instrumentCache = new Map();
@@ -171,7 +187,50 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
   }
 
   const result = await bybitRequest('POST', '/v5/order/create', params);
-  return { placed: true, orderId: result.orderId, symbol, side, qty: roundedQty, tp: roundedTp, sl: roundedSl };
+
+  // A MARKET order fills at whatever the live price is, not the
+  // confirmation-candle close we estimated when sizing this trade — on a
+  // fast-moving breakout the two can differ by a meaningful amount. The
+  // SL/TP just submitted are FIXED prices computed against our estimate,
+  // so if the fill is materially different, the real distance from entry
+  // to stop (and therefore the real dollar risk) no longer matches what
+  // qty was sized for. Re-read the actual average entry and re-anchor
+  // SL/TP to it, preserving the same price distance from entry — that
+  // keeps the dollar risk close to what qty was built for, instead of
+  // leaving a stop that was correct for a price we never actually got.
+  let realEntry = entryPrice;
+  let finalSl = roundedSl;
+  let finalTp = roundedTp;
+  try {
+    let pos = null;
+    for (let i = 0; i < 4; i++) {
+      await sleep(400);
+      pos = await getPosition(symbol);
+      if (pos && parseFloat(pos.avgPrice) > 0) break;
+    }
+    const avgPrice = pos && parseFloat(pos.avgPrice);
+    if (avgPrice && Math.abs(avgPrice - entryPrice) > info.tickSize) {
+      realEntry = avgPrice;
+      const slDistance = Math.abs(entryPrice - slLevel);
+      finalSl = roundToStep(
+        direction === 'bull' ? realEntry - slDistance : realEntry + slDistance,
+        info.tickSize
+      );
+      if (safeTp) {
+        const tpDistance = Math.abs(entryPrice - safeTp);
+        finalTp = roundToStep(
+          direction === 'bull' ? realEntry + tpDistance : realEntry - tpDistance,
+          info.tickSize
+        );
+      }
+      await updateTradingStop(symbol, { stopLoss: finalSl, takeProfit: finalTp });
+      console.log(`[bybit] re-anchored ${symbol} SL/TP to actual fill $${realEntry} (estimated $${entryPrice}) — SL now $${finalSl}${finalTp ? `, TP $${finalTp}` : ''}`);
+    }
+  } catch (e) {
+    console.log(`[bybit] could not re-anchor SL/TP to actual fill for ${symbol} — stop stays at the pre-trade estimate:`, e.message);
+  }
+
+  return { placed: true, orderId: result.orderId, symbol, side, qty: roundedQty, entry: realEntry, tp: finalTp, sl: finalSl };
 }
 
 module.exports = { AUTO_TRADE, placeOrder, getInstrumentInfo, bybitRequest };

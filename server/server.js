@@ -13,6 +13,7 @@ const stateMod = require('./lib/state');
 const { startScan, run2HConfirmation } = require('./lib/scan');
 const { runAutoOutcomeChecks } = require('./lib/tradelog');
 const tradelog = require('./lib/tradelog');
+const { flushTgQueue } = require('./lib/telegram');
 
 const app = express();
 app.use(cors());
@@ -112,6 +113,14 @@ app.listen(PORT, () => {
   setInterval(() => {
     runAutoOutcomeChecks().catch(e => console.log('[tradelog] outcome check error:', e.message));
   }, 60 * 60 * 1000);
+
+  // Retry any Telegram alerts that failed on their first attempt — without
+  // this, a single transient failure (network blip, Telegram rate-limit)
+  // leaves the alert queued forever and silently never delivered, since
+  // nothing else was pulling from that queue.
+  setInterval(() => {
+    flushTgQueue().catch(e => console.log('[telegram] queue flush error:', e.message));
+  }, 2 * 60 * 1000);
 });
 
 process.on('unhandledRejection', (e) => console.log('[unhandled]', e));

@@ -315,8 +315,6 @@ async function run2HConfirmation() {
         item.entryPrice = entryPrice;
         item.confirmedAt = result2h.confirmTime + (30 * 60 * 1000); // candle CLOSE time, not open
 
-        logTrade(item, result2h);
-
         // Auto-execute on Bybit Demo Trading — no-ops (returns
         // {skipped: true, reason}) unless BYBIT_AUTO_TRADE=true and keys
         // are set, so this is silent and harmless when auto-trading is off.
@@ -340,6 +338,24 @@ async function run2HConfirmation() {
         }
         item.bybitResult = bybitResult;
 
+        // A filled market order can land at a different price than our
+        // pre-trade estimate (and bybit.js re-anchors SL/TP to that real
+        // fill when it does) — once that's happened, the real numbers on
+        // the exchange ARE the truth, so show those everywhere else
+        // (dashboard, Telegram, trade log) instead of the estimate that
+        // was only ever a sizing input.
+        if (bybitResult.placed) {
+          if (bybitResult.entry) item.entryPrice = bybitResult.entry;
+          if (bybitResult.sl) {
+            item.slLevel = bybitResult.sl;
+            item.slRisk = calcRR(item.entryPrice, bybitResult.sl);
+          }
+          item.tpLevel = bybitResult.tp || null;
+          item.tpGain = bybitResult.tp ? calcRR(item.entryPrice, bybitResult.tp) : null;
+        }
+
+        logTrade(item, result2h);
+
         const tpTag = item.tpEstimated ? ' ⚠️est.' : '';
         const slTag = item.slEstimated ? ' ⚠️est.' : '';
         const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}` : '\n🎯 TP: none found — size manually';
@@ -360,7 +376,7 @@ async function run2HConfirmation() {
           + `<b>${item.symbol.replace('USDT', '')}/USDT</b> · ${dir}\n`
           + `Signal: ${item.signal1d}\n`
           + `Confirmation: ${result2h.label}\n`
-          + `Entry: $${fmt(entryPrice)} · ${result2h.dateStr}`
+          + `Entry: $${fmt(item.entryPrice)} · ${result2h.dateStr}`
           + tpText + slText + sizeText + trailingText + bybitText;
         await sendTelegram(tgMsg);
       }
@@ -373,6 +389,13 @@ async function run2HConfirmation() {
       });
     } catch (e) {
       if (e instanceof RateLimitError) throw e;
+      // This used to fail silently — if confirmation logic threw partway
+      // through (after alerted/confirmed flags were already set, say),
+      // the item would just vanish from this cycle's results with no
+      // trace of why, and whatever came after the failure point (Telegram,
+      // Bybit) would never run. Logging it is the only way a one-off
+      // failure like that is ever diagnosable from the Render logs.
+      console.log(`[confirm] error processing ${item.symbol}:`, e.message);
       confirmResults.push({ ...item, confirmed: false, signal2h: null });
     }
     await sleep(80);
