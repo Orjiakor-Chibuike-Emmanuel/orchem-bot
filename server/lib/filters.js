@@ -51,7 +51,7 @@ function tightStopLevel(entryPrice, priorCandle, direction) {
   if (!priorCandle) return null;
   const level = direction === 'bull' ? priorCandle.low : priorCandle.high;
   const valid = direction === 'bull' ? level < entryPrice * 0.999 : level > entryPrice * 1.001;
-  return valid ? { price: level, estimated: false, tight: true } : null;
+  return valid ? { price: level, estimated: false, tight: true, source: 'tight-prior-candle' } : null;
 }
 
 // Position size for a fixed max-risk amount + suggested leverage for a

@@ -31,8 +31,10 @@ function logTrade(item, result2h, entryStatus = 'confirmed') {
     entryPrice: item.entryPrice || (result2h ? result2h.closePrice : null),
     tpLevel: item.tpLevel,
     tpGain: item.tpGain,
+    tpSource: item.tpSource || null,
     slLevel: item.slLevel,
     slRisk: item.slRisk,
+    slSource: item.slSource || null,
     sizeQty: item.sizeQty || null,
     sizeNotional: item.sizeNotional || null,
     sizeLeverage: item.sizeLeverage || null,
@@ -196,11 +198,11 @@ function clearLog() {
 
 function exportCsv() {
   const tradeLog = stateMod.tradeLog;
-  const headers = ['Date', 'Status', 'Symbol', 'Direction', 'Signal', 'Confirmation Price', 'Entry Price (fill)', 'TP Level', 'TP %', 'SL Level', 'SL %', 'Size (qty)', 'Size (notional $)', 'Leverage (x)', 'Trailing %', 'Signal Age', 'Confirm Time', 'Outcome', 'Outcome Source', 'Actual Exit', 'Actual PnL ($)', 'Notes'];
+  const headers = ['Date', 'Status', 'Symbol', 'Direction', 'Signal', 'Confirmation Price', 'Entry Price (fill)', 'TP Level', 'TP %', 'TP Source', 'SL Level', 'SL %', 'SL Source', 'Size (qty)', 'Size (notional $)', 'Leverage (x)', 'Trailing %', 'Signal Age', 'Confirm Time', 'Outcome', 'Outcome Source', 'Actual Exit', 'Actual PnL ($)', 'Notes'];
   const rows = tradeLog.map(t => [
     t.date, t.entryStatus || 'confirmed', t.symbol, t.direction === 'bull' ? 'LONG' : 'SHORT',
-    t.signal1d, t.confirmationPrice || '', t.entryPrice || '', t.tpLevel || '', t.tpGain || '',
-    t.slLevel || '', t.slRisk || '', t.sizeQty || '', t.sizeNotional ? t.sizeNotional.toFixed(2) : '',
+    t.signal1d, t.confirmationPrice || '', t.entryPrice || '', t.tpLevel || '', t.tpGain || '', t.tpSource || '',
+    t.slLevel || '', t.slRisk || '', t.slSource || '', t.sizeQty || '', t.sizeNotional ? t.sizeNotional.toFixed(2) : '',
     t.sizeLeverage ? t.sizeLeverage.toFixed(1) : '',
     t.trailingPct || '', t.signalAge, t.confirmTime, t.outcome,
     t.outcomeSource || '', t.actualExitPrice || '', t.actualPnl != null ? t.actualPnl.toFixed(2) : '',

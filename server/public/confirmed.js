@@ -24,6 +24,16 @@ function timeAgo(ts) {
   return `${hrs}h ago`;
 }
 
+// Which of the three SL/TP methods produced this level — shown inline so
+// "how was this calculated?" never has to be reverse-engineered from a
+// chart after the fact.
+function srcTag(source) {
+  if (source === 'tight-prior-candle') return ' <span class="src-tag">tight</span>';
+  if (source === 'swing-level') return ' <span class="src-tag">swing</span>';
+  if (source === 'range-extreme') return ' <span class="src-tag">range</span>';
+  return '';
+}
+
 function renderConfirmed(list) {
   const confirmed = (list || [])
     .filter(item => item.confirmed && !item.invalidated)
@@ -72,8 +82,8 @@ function renderConfirmed(list) {
       <div class="confirmed-card-grid">
         <span>confirmed @ <b>$${fmt(item.confirmationPrice)}</b></span>
         ${item.entryPrice && item.entryPrice !== item.confirmationPrice ? `<span>fill <b>$${fmt(item.entryPrice)}</b></span>` : ''}
-        ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)</span>` : `<span>tp <b>none found</b> — size manually</span>`}
-        ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)</span>` : `<span>sl <b>none found</b> — size manually</span>`}
+        ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)${srcTag(item.tpSource)}</span>` : `<span>tp <b>none found</b> — size manually</span>`}
+        ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)${srcTag(item.slSource)}</span>` : `<span>sl <b>none found</b> — size manually</span>`}
         ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage}x</b></span>` : ''}
         ${trailingCell}
       </div>

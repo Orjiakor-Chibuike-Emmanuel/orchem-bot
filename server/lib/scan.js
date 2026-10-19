@@ -280,19 +280,27 @@ async function run2HConfirmation() {
           item.tpLevel = confirmTp.price;
           item.tpGain = calcRR(entryPrice, confirmTp.price);
           item.tpEstimated = confirmTp.estimated;
+          item.tpSource = confirmTp.source || null;
         } else {
           item.tpLevel = null;
           item.tpGain = null;
           item.tpEstimated = false;
+          item.tpSource = null;
         }
         if (slValid) {
           item.slLevel = confirmSl.price;
           item.slRisk = calcRR(entryPrice, confirmSl.price);
           item.slEstimated = confirmSl.estimated;
+          // 'tight-prior-candle' | 'swing-level' | 'range-extreme' — exactly
+          // which of the three SL methods produced this number, recorded so
+          // it never has to be reverse-engineered from a chart after the
+          // fact again.
+          item.slSource = confirmSl.source || null;
         } else {
           item.slLevel = null;
           item.slRisk = null;
           item.slEstimated = false;
+          item.slSource = null;
         }
 
         const sizing = calcPositionSize(entryPrice, item.slLevel, MAX_RISK_USD, MARGIN_PER_TRADE_USD);
@@ -363,8 +371,9 @@ async function run2HConfirmation() {
 
         const tpTag = item.tpEstimated ? ' ⚠️est.' : '';
         const slTag = item.slEstimated ? ' ⚠️est.' : '';
-        const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}` : '\n🎯 TP: none found — size manually';
-        const slText = item.slLevel ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)${slTag}` : '\n🛑 SL: none found — size manually';
+        const srcLabel = s => s === 'tight-prior-candle' ? ' [tight: prior candle]' : s === 'swing-level' ? ' [swing level]' : s === 'range-extreme' ? ' [range extreme]' : '';
+        const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}${srcLabel(item.tpSource)}` : '\n🎯 TP: none found — size manually';
+        const slText = item.slLevel ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)${slTag}${srcLabel(item.slSource)}` : '\n🛑 SL: none found — size manually';
         const levTag = item.sizeLeverage && item.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? ' ⚠️ SL too tight for this margin — consider skipping or a wider stop' : '';
         const sizeText = item.sizeLeverage
           ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage}x${levTag}`

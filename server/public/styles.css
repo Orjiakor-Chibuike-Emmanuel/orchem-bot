@@ -247,6 +247,13 @@ a.btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   color: var(--steel);
 }
 .confirmed-card-grid b { color: var(--paper); }
+.src-tag {
+  font-size: 0.65rem;
+  color: var(--steel-dim);
+  border: 1px solid var(--line-bright);
+  padding: 0 4px;
+  border-radius: 2px;
+}
 .confirmed-card-bybit {
   margin-top: 8px;
   padding-top: 8px;

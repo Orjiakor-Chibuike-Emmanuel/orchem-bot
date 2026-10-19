@@ -155,22 +155,26 @@ function rangeExtremeLevel(closed, direction, kind) {
   }
 }
 
+// 'source' on every returned level says exactly which method produced it
+// (swing-level | range-extreme | tight-prior-candle) — without this,
+// there's no way to answer "how was this SL actually calculated?" for any
+// specific past trade after the fact.
 function resolveTP(price, levels, closed, direction) {
   const lvl = findTPLevel(price, levels, direction);
-  if (lvl) return { price: lvl.price, estimated: false };
+  if (lvl) return { price: lvl.price, estimated: false, source: 'swing-level' };
   const fb = rangeExtremeLevel(closed, direction, 'tp');
   if (fb == null) return null;
   const valid = direction === 'bull' ? fb > price * 1.005 : fb < price * 0.995;
-  return valid ? { price: fb, estimated: true } : null;
+  return valid ? { price: fb, estimated: true, source: 'range-extreme' } : null;
 }
 
 function resolveSL(price, levels, closed, direction) {
   const lvl = findSLLevel(price, levels, direction);
-  if (lvl) return { price: lvl.price, estimated: false };
+  if (lvl) return { price: lvl.price, estimated: false, source: 'swing-level' };
   const fb = rangeExtremeLevel(closed, direction, 'sl');
   if (fb == null) return null;
   const valid = direction === 'bull' ? fb < price * 0.995 : fb > price * 1.005;
-  return valid ? { price: fb, estimated: true } : null;
+  return valid ? { price: fb, estimated: true, source: 'range-extreme' } : null;
 }
 
 function getSignalAge(signalTimestamp) {
