@@ -1,0 +1,282 @@
+/* ═══════════════════════════════════════
+   MAIN SCAN + 30MIN CONFIRMATION LOOP
+   Ported from index-v15.html's startScan() /
+   run2HConfirmation(), adapted to run on a
+   server timer instead of a button click +
+   browser-tab-lifetime timers. This is the
+   actual fix for "Telegram almost never
+   fires" — this loop runs as long as the
+   Render service is up, with no dependency
+   on any browser tab, phone, or device at all.
+═══════════════════════════════════════ */
+const stateMod = require('./state');
+const { fetchSymbols, fetchKlines, fetch2HKlines } = require('./binance');
+const {
+  analyseSymbol, analyse2H, findSwingLevels, resolveTP, resolveSL
+} = require('./boundary');
+const {
+  calcPairExhaustionThreshold, isRecentMoveExhausted, tightStopLevel,
+  calcPositionSize, calcSuggestedTrailing, RECENT_MOVE_EXHAUSTION_PCT
+} = require('./filters');
+const { sendTelegram } = require('./telegram');
+const { fmt, logTrade } = require('./tradelog');
+const { calcRR } = require('./boundary');
+
+const MAX_RISK_USD = parseFloat(process.env.MAX_RISK_USD || '35');
+const MARGIN_PER_TRADE_USD = parseFloat(process.env.MARGIN_PER_TRADE_USD || '150');
+const MAX_SENSIBLE_LEVERAGE = parseFloat(process.env.MAX_SENSIBLE_LEVERAGE || '50');
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+let scanning = false;
+
+async function startScan() {
+  if (scanning) {
+    console.log('[scan] already running, skipping overlapping scan');
+    return;
+  }
+  scanning = true;
+  stateMod.state.status = 'SCANNING';
+  stateMod.save();
+
+  const { flushTgQueue } = require('./telegram');
+  await flushTgQueue();
+
+  let engulfResults = [];
+  let auxResults = [];
+
+  try {
+    const symbols = await fetchSymbols();
+    const total = symbols.length;
+    console.log(`[scan] scanning ${total} pairs...`);
+
+    const BATCH = 10;
+    for (let i = 0; i < total; i += BATCH) {
+      const batch = symbols.slice(i, i + BATCH);
+      await Promise.all(batch.map(async sym => {
+        try {
+          const klines = await fetchKlines(sym, 60, '1d');
+          const { engulf, aux } = analyseSymbol(sym, klines);
+          if (engulf) engulfResults.push(engulf);
+          if (aux) auxResults.push(aux);
+        } catch (_) {}
+      }));
+      await sleep(120);
+    }
+
+    const seenEngulf = new Set();
+    engulfResults = engulfResults.filter(r => {
+      if (seenEngulf.has(r.symbol)) return false;
+      seenEngulf.add(r.symbol);
+      return true;
+    });
+    const seenAux = new Set();
+    auxResults = auxResults.filter(r => {
+      if (seenAux.has(r.symbol)) return false;
+      seenAux.add(r.symbol);
+      return true;
+    });
+
+    stateMod.state.engulfResults = engulfResults;
+    stateMod.state.auxResults = auxResults;
+
+    const allSignals = [...engulfResults, ...auxResults.filter(r => r.direction !== null)];
+
+    const todayUTC = new Date();
+    todayUTC.setUTCHours(0, 0, 0, 0);
+    const dailyOpenTimestamp = todayUTC.getTime();
+
+    const trailingMap = {};
+    for (const r of allSignals) {
+      trailingMap[r.symbol] = await calcSuggestedTrailing(r.symbol);
+      await sleep(50);
+    }
+
+    const exhaustionThresholdMap = {};
+    for (const r of allSignals) {
+      exhaustionThresholdMap[r.symbol] = await calcPairExhaustionThreshold(r.symbol);
+      await sleep(50);
+    }
+
+    const sets = stateMod.alertSets();
+
+    const newWatchlist = allSignals.map(r => ({
+      symbol: r.symbol,
+      direction: r.direction,
+      signal1d: r.label || r.signal,
+      signalTimestamp: dailyOpenTimestamp,
+      signalHigh: r.signalHigh != null ? r.signalHigh : null,
+      signalLow: r.signalLow != null ? r.signalLow : null,
+      tpLevel: r.tpLevel || null,
+      tpGain: r.tpGain || null,
+      tpEstimated: r.tpEstimated || false,
+      slLevel: r.slLevel || null,
+      slRisk: r.slRisk || null,
+      slEstimated: r.slEstimated || false,
+      trailingPct: trailingMap[r.symbol] || null,
+      exhaustionPct: exhaustionThresholdMap[r.symbol] || RECENT_MOVE_EXHAUSTION_PCT,
+      entryPrice: r.price || r.closePrice || null,
+      detectedAt: Date.now(),
+      alerted: sets.confirmed.has(r.symbol),
+      invalidated: sets.invalidated.has(r.symbol)
+    }));
+
+    stateMod.state.watchlist = newWatchlist;
+    stateMod.state.lastScan = Date.now();
+    stateMod.save();
+
+    console.log(`[scan] done — ${engulfResults.length} engulfing, ${auxResults.length} aux, ${newWatchlist.length} on watchlist`);
+
+    if (newWatchlist.length) {
+      await run2HConfirmation();
+    }
+  } catch (e) {
+    console.log('[scan] error:', e.message);
+  }
+
+  stateMod.state.status = 'IDLE';
+  stateMod.save();
+  scanning = false;
+}
+
+async function run2HConfirmation() {
+  const watchlist = stateMod.state.watchlist;
+  if (!watchlist.length) return;
+
+  const sets = stateMod.alertSets();
+  const confirmResults = [];
+
+  for (const item of watchlist) {
+    if (item.invalidated) {
+      confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: item.entryPrice });
+      continue;
+    }
+
+    try {
+      const klines2h = await fetch2HKlines(item.symbol, item.signalTimestamp);
+      const candles2h = klines2h ? klines2h.filtered : null;
+      const allCandles2h = klines2h ? klines2h.all : null;
+      const result2h = candles2h
+        ? analyse2H(item.symbol, candles2h, item.direction, item.signalHigh, item.signalLow, fmt)
+        : null;
+
+      const latestPrice = allCandles2h && allCandles2h.length >= 2
+        ? allCandles2h[allCandles2h.length - 2].close
+        : item.entryPrice;
+
+      if (result2h && result2h.invalidated) {
+        item.invalidated = true;
+        sets.invalidated.add(item.symbol);
+        stateMod.saveAlertSets(sets);
+        if (!item.invalidatedLogged) {
+          item.invalidatedLogged = true;
+          logTrade(item, null, 'invalidated');
+        }
+        confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice });
+        await sleep(80);
+        continue;
+      }
+
+      if (result2h && !item.alerted && isRecentMoveExhausted(allCandles2h, item.direction, item.exhaustionPct)) {
+        if (!sets.exhaustedLogged.has(item.symbol)) {
+          sets.exhaustedLogged.add(item.symbol);
+          stateMod.saveAlertSets(sets);
+          logTrade(item, result2h, 'exhausted');
+        }
+        confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice, exhausted: true });
+        await sleep(80);
+        continue;
+      }
+
+      if (result2h && !item.alerted) {
+        item.alerted = true;
+        sets.confirmed.add(item.symbol);
+        stateMod.saveAlertSets(sets);
+
+        const dir = result2h.direction === 'bull' ? '▲ LONG' : '▼ SHORT';
+        const dirEmoji = result2h.direction === 'bull' ? '🟢' : '🔴';
+        const entryPrice = result2h.closePrice;
+
+        let confirmTp = null, confirmSl = null;
+        try {
+          const freshKlines = await fetchKlines(item.symbol, 60, '1d');
+          if (freshKlines && freshKlines.length > 5) {
+            const freshClosed = freshKlines.slice(0, -1);
+            const freshLevels = findSwingLevels(freshClosed);
+            confirmTp = resolveTP(entryPrice, freshLevels, freshClosed, item.direction);
+            confirmSl = resolveSL(entryPrice, freshLevels, freshClosed, item.direction);
+          }
+        } catch (_) {}
+
+        const tightSl = tightStopLevel(entryPrice, result2h.priorCandle, item.direction);
+        if (tightSl) confirmSl = tightSl;
+
+        const tpValid = confirmTp && (
+          (item.direction === 'bull' && confirmTp.price > entryPrice) ||
+          (item.direction === 'bear' && confirmTp.price < entryPrice)
+        );
+        const slValid = confirmSl && (
+          (item.direction === 'bull' && confirmSl.price < entryPrice) ||
+          (item.direction === 'bear' && confirmSl.price > entryPrice)
+        );
+        if (tpValid) {
+          item.tpLevel = confirmTp.price;
+          item.tpGain = calcRR(entryPrice, confirmTp.price);
+          item.tpEstimated = confirmTp.estimated;
+        }
+        if (slValid) {
+          item.slLevel = confirmSl.price;
+          item.slRisk = calcRR(entryPrice, confirmSl.price);
+          item.slEstimated = confirmSl.estimated;
+        }
+
+        const sizing = calcPositionSize(entryPrice, item.slLevel, MAX_RISK_USD, MARGIN_PER_TRADE_USD);
+        if (sizing) {
+          item.sizeQty = sizing.qty;
+          item.sizeNotional = sizing.notional;
+          item.sizeLeverage = sizing.leverage;
+        } else {
+          item.sizeQty = item.sizeNotional = item.sizeLeverage = null;
+        }
+
+        logTrade(item, result2h);
+
+        const tpTag = item.tpEstimated ? ' ⚠️est.' : '';
+        const slTag = item.slEstimated ? ' ⚠️est.' : '';
+        const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}` : '\n🎯 TP: none found — size manually';
+        const slText = item.slLevel ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)${slTag}` : '\n🛑 SL: none found — size manually';
+        const levTag = item.sizeLeverage && item.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? ' ⚠️ SL too tight for this margin — consider skipping or a wider stop' : '';
+        const sizeText = item.sizeQty
+          ? `\n💰 Size for $${MAX_RISK_USD} risk: ${fmt(item.sizeQty)} ${item.symbol.replace('USDT', '')} (~$${item.sizeNotional.toFixed(2)} notional)` +
+            (item.sizeLeverage ? `\n⚙️ Leverage needed on $${MARGIN_PER_TRADE_USD} margin: ${item.sizeLeverage.toFixed(1)}x${levTag}` : '')
+          : '';
+        const trailingText = item.trailingPct ? `\n📌 Trailing Stop: ${item.trailingPct}% (set on Bybit)` : '';
+        sets.tg.add(item.symbol);
+        stateMod.saveAlertSets(sets);
+        const tgMsg = `${dirEmoji} <b>ENTRY CONFIRMED</b>\n`
+          + `<b>${item.symbol.replace('USDT', '')}/USDT</b> · ${dir}\n`
+          + `Signal: ${item.signal1d}\n`
+          + `Confirmation: ${result2h.label}\n`
+          + `Entry: $${fmt(entryPrice)} · ${result2h.dateStr}`
+          + tpText + slText + sizeText + trailingText;
+        await sendTelegram(tgMsg);
+      }
+
+      confirmResults.push({
+        ...item,
+        confirmed: !!result2h,
+        signal2h: result2h,
+        currentPrice: latestPrice
+      });
+    } catch (e) {
+      confirmResults.push({ ...item, confirmed: false, signal2h: null });
+    }
+    await sleep(80);
+  }
+
+  stateMod.state.watchlist = watchlist; // mutated in place (alerted/invalidated flags)
+  stateMod.state.confirmResults = confirmResults;
+  stateMod.save();
+}
+
+module.exports = { startScan, run2HConfirmation, MAX_RISK_USD, MARGIN_PER_TRADE_USD, MAX_SENSIBLE_LEVERAGE };

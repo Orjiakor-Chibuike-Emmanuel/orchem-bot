@@ -1,0 +1,19 @@
+{
+  "name": "orchem-bot-server",
+  "version": "15.0.0",
+  "description": "Orchem Bot — always-on server version. Boundary-candle breakout scanner with 30min confirmation and Telegram alerts.",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5"
+  }
+}

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orchem — Signal Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="header-strip">
+  <div class="header-inner">
+    <div class="brand">
+      <span class="brand-mark">ORCHEM</span>
+      <span class="brand-sub">SIGNAL PANEL v15</span>
+    </div>
+    <div class="status-cluster">
+      <div class="status-led-group">
+        <span class="led" id="led-status"></span>
+        <span class="status-label" id="status-text">—</span>
+      </div>
+      <div class="readout">
+        <span class="readout-label">LAST SCAN</span>
+        <span class="readout-value" id="last-scan">—</span>
+      </div>
+      <div class="readout">
+        <span class="readout-label">NEXT SCAN</span>
+        <span class="readout-value" id="next-scan">—</span>
+      </div>
+      <button class="btn" id="scan-btn">FORCE SCAN</button>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+
+  <div class="section">
+    <div class="nameplate">
+      <span class="nameplate-title">Watchlist</span>
+      <span class="nameplate-count" id="watchlist-count">0 channels</span>
+    </div>
+    <div id="channels"></div>
+  </div>
+
+  <div class="section">
+    <div class="nameplate">
+      <span class="nameplate-title">Logbook</span>
+      <span class="nameplate-count" id="log-count">0 entries</span>
+    </div>
+    <div class="stats-row" id="stats-row"></div>
+    <div class="logbook" id="log-rows"></div>
+  </div>
+
+</div>
+
+<footer class="foot">
+  <span>Scans for boundary-candle breakouts, confirms on 30min candles, sized to $35 max risk per trade.</span>
+  <a href="/api/trade-log/export">export logbook (csv)</a>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
