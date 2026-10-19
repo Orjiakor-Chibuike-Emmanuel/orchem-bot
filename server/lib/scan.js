@@ -267,15 +267,32 @@ async function run2HConfirmation() {
           (item.direction === 'bull' && confirmSl.price < entryPrice) ||
           (item.direction === 'bear' && confirmSl.price > entryPrice)
         );
+        // CRITICAL: item.tpLevel/slLevel at this point are still whatever
+        // the 1D scan guessed BEFORE confirmation, computed against that
+        // scan-time price — not this candle's confirmed entry. If the
+        // fresh confirm-time TP/SL isn't valid, we must clear the stale
+        // ones rather than leave them in place: price has moved since the
+        // scan, so a pre-confirmation TP can end up on the WRONG SIDE of
+        // the real entry (e.g. "take profit" above entry on a short) and
+        // get sent to Telegram, the dashboard, and Bybit as if it were
+        // current and correct. "No level found" is the honest result here.
         if (tpValid) {
           item.tpLevel = confirmTp.price;
           item.tpGain = calcRR(entryPrice, confirmTp.price);
           item.tpEstimated = confirmTp.estimated;
+        } else {
+          item.tpLevel = null;
+          item.tpGain = null;
+          item.tpEstimated = false;
         }
         if (slValid) {
           item.slLevel = confirmSl.price;
           item.slRisk = calcRR(entryPrice, confirmSl.price);
           item.slEstimated = confirmSl.estimated;
+        } else {
+          item.slLevel = null;
+          item.slRisk = null;
+          item.slEstimated = false;
         }
 
         const sizing = calcPositionSize(entryPrice, item.slLevel, MAX_RISK_USD, MARGIN_PER_TRADE_USD);

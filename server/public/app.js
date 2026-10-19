@@ -85,14 +85,10 @@ function renderChannel(item, idx) {
   const isNew = item.confirmed && !prevConfirmed.has(item.symbol);
   const price = item.currentPrice ?? item.entryPrice;
 
-  const detail = item.confirmed
-    ? `<span>entry <b>$${fmt(item.entryPrice ?? item.signal2h?.closePrice)}</b></span>
-       ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)</span>` : ''}
-       ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)</span>` : ''}
-       ${item.sizeQty ? `<span>size <b>${fmt(item.sizeQty)}</b></span>` : ''}
-       ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage}x</b></span>` : ''}
-       ${item.trailingPct ? `<span>trailing <b>${item.trailingPct}%</b></span>` : ''}`
-    : `<span>${item.signal1d || ''}</span>`;
+  // Confirmed items never reach here (renderChannels filters them to the
+  // dedicated Confirmed page) — this card only ever shows a pending or
+  // invalidated/exhausted pair, waiting on its 1D label.
+  const detail = `<span>${item.signal1d || ''}</span>`;
 
   return `<div class="channel ${cls} ${isNew ? 'fresh-confirm' : ''}">
     <span class="channel-id">CH${String(idx + 1).padStart(2, '0')}</span>
@@ -112,70 +108,32 @@ function renderChannel(item, idx) {
   </div>`;
 }
 
-/* ── CONFIRMED SIGNALS PANEL ──
-   A persistent section, separate from the scrolling watchlist, so a
-   confirmed trade can't be missed just because its border color changed
-   somewhere in a long list. Shows the confirmation timestamp (so the
-   candle can be found and traded manually too) and what Bybit did. */
-function renderConfirmed(list) {
-  const section = document.getElementById('confirmed-section');
-  const confirmed = (list || []).filter(item => item.confirmed && !item.invalidated);
-
-  if (!confirmed.length) {
-    section.style.display = 'none';
-    return;
-  }
-  section.style.display = '';
-  document.getElementById('confirmed-count').textContent = confirmed.length;
-
-  document.getElementById('confirmed-list').innerHTML = confirmed.map(item => {
-    const isBull = item.direction === 'bull';
-    const whenAbs = item.confirmedAt ? new Date(item.confirmedAt).toLocaleString('en-GB', {
-      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
-    }) : (item.signal2h && item.signal2h.dateStr) || '—';
-    const whenAgo = item.confirmedAt ? timeAgo(item.confirmedAt) : '';
-
-    const r = item.bybitResult || {};
-    const bybitCls = r.placed ? 'placed' : r.error ? 'failed' : 'skipped';
-    const bybitLine = r.placed
-      ? `🤖 Bybit Demo: order placed — qty ${r.qty}, SL $${r.sl}${r.tp ? `, TP $${r.tp}` : ''}`
-      : r.error
-        ? `🤖 Bybit Demo: FAILED — ${r.reason}`
-        : r.reason
-          ? `🤖 Bybit Demo: ${r.reason}`
-          : '';
-
-    return `<div class="confirmed-card">
-      <div class="confirmed-card-top">
-        <span class="confirmed-card-name">${item.symbol.replace('USDT', '')}/USDT
-          <span class="dir-tag ${isBull ? 'long' : 'short'}">${isBull ? 'LONG' : 'SHORT'}</span>
-        </span>
-        <span class="confirmed-card-when">confirmed ${whenAbs}${whenAgo ? ` (${whenAgo})` : ''}</span>
-      </div>
-      <div class="confirmed-card-grid">
-        <span>entry <b>$${fmt(item.entryPrice)}</b></span>
-        ${item.tpLevel ? `<span>tp <b>$${fmt(item.tpLevel)}</b> (+${item.tpGain}%)</span>` : ''}
-        ${item.slLevel ? `<span>sl <b>$${fmt(item.slLevel)}</b> (-${item.slRisk}%)</span>` : ''}
-        ${item.sizeQty ? `<span>size <b>${fmt(item.sizeQty)}</b></span>` : ''}
-        ${item.sizeLeverage ? `<span>lev <b>${item.sizeLeverage}x</b></span>` : ''}
-        ${item.trailingPct ? `<span>trailing <b>${item.trailingPct}%</b></span>` : ''}
-      </div>
-      ${bybitLine ? `<div class="confirmed-card-bybit ${bybitCls}">${bybitLine}</div>` : ''}
-    </div>`;
-  }).join('');
-}
-
+// Confirmed signals get their own page (confirmed.html/confirmed.js) —
+// once a pair confirms, it comes OFF this list entirely rather than
+// staying mixed in with everything still waiting, so the watchlist here
+// is always just "what's still in play", however many have confirmed
+// today.
 function renderChannels(watchlist) {
   const el = document.getElementById('channels');
-  document.getElementById('watchlist-count').textContent = `${watchlist.length} channel${watchlist.length === 1 ? '' : 's'}`;
+  const pending = (watchlist || []).filter(item => !item.confirmed);
+  document.getElementById('watchlist-count').textContent = `${pending.length} channel${pending.length === 1 ? '' : 's'}`;
 
-  if (!watchlist.length) {
+  if (!pending.length) {
     el.innerHTML = `<div class="empty-state">No pairs on watch right now — the next scan cycle will populate this.</div>`;
     return;
   }
 
-  el.innerHTML = watchlist.map((item, i) => renderChannel(item, i)).join('');
-  prevConfirmed = new Set(watchlist.filter(w => w.confirmed).map(w => w.symbol));
+  el.innerHTML = pending.map((item, i) => renderChannel(item, i)).join('');
+  prevConfirmed = new Set((watchlist || []).filter(w => w.confirmed).map(w => w.symbol));
+}
+
+function renderConfirmedBadge(watchlist) {
+  const count = (watchlist || []).filter(item => item.confirmed && !item.invalidated).length;
+  const badge = document.getElementById('confirmed-badge');
+  const link = document.getElementById('confirmed-link');
+  if (!badge || !link) return;
+  badge.textContent = count;
+  link.classList.toggle('btn-confirmed-active', count > 0);
 }
 
 function renderStats(tradeLog) {
@@ -258,7 +216,7 @@ async function poll() {
     // Prefer confirmResults — it carries the live confirmed/invalidated/
     // exhausted flags; watchlist alone is only the raw pre-confirmation list.
     const list = data.confirmResults && data.confirmResults.length ? data.confirmResults : data.watchlist || [];
-    renderConfirmed(list);
+    renderConfirmedBadge(list);
     renderChannels(list);
     renderLog(data.tradeLog || []);
   } catch (e) {

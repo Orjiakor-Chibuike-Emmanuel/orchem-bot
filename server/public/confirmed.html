@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orchem — Confirmed Signals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="header-strip">
+  <div class="header-inner">
+    <div class="brand">
+      <a class="brand-mark" href="/" style="text-decoration:none">ORCHEM</a>
+      <span class="brand-sub">CONFIRMED SIGNALS</span>
+    </div>
+    <div class="status-cluster">
+      <a class="btn" href="/">← SIGNAL PANEL</a>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="section">
+    <div class="nameplate nameplate-confirmed">
+      <span class="nameplate-title">Confirmed, this session</span>
+      <span class="nameplate-count" id="confirmed-count">0</span>
+    </div>
+    <div id="confirmed-list"></div>
+  </div>
+</div>
+
+<footer class="foot">
+  <span>Every confirmed entry since the watchlist last reset at UTC midnight — the exact candle, entry, TP/SL, size, and what Bybit did with it.</span>
+</footer>
+
+<script src="confirmed.js"></script>
+</body>
+</html>

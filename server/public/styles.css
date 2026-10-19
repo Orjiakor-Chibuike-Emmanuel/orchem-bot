@@ -157,6 +157,23 @@ a { color: var(--phosphor); text-decoration: none; }
 }
 .btn:hover { border-color: var(--phosphor); color: var(--phosphor); }
 .btn:active { transform: translateY(1px); }
+a.btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+
+.btn-confirmed #confirmed-badge,
+#confirmed-badge {
+  font-weight: 700;
+  color: var(--steel-dim);
+}
+.btn-confirmed-active {
+  border-color: var(--phosphor);
+  color: var(--phosphor);
+}
+.btn-confirmed-active #confirmed-badge {
+  color: var(--bg);
+  background: var(--phosphor);
+  padding: 0 6px;
+  animation: pulse 2s infinite;
+}
 
 /* ── SECTION NAMEPLATES ── */
 .section {

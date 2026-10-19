@@ -71,8 +71,15 @@ function calcPositionSize(entryPrice, slLevel, maxRiskUsd, marginUsd) {
 async function calcSuggestedTrailing(symbol) {
   try {
     const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=20`);
+    if (!r) {
+      console.log(`[trailing] ${symbol}: apiFetch returned null (request failed or non-OK — see [binance] log above)`);
+      return null;
+    }
     const raw = await safeJson(r);
-    if (!Array.isArray(raw) || raw.length < 5) return null;
+    if (!Array.isArray(raw) || raw.length < 5) {
+      console.log(`[trailing] ${symbol}: bad/short klines response, got ${Array.isArray(raw) ? raw.length : typeof raw}`);
+      return null;
+    }
     const ranges = raw.map(k => {
       const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]);
       return ((high - low) / close) * 100;
@@ -82,6 +89,7 @@ async function calcSuggestedTrailing(symbol) {
     return parseFloat(suggested);
   } catch (e) {
     if (e instanceof RateLimitError) throw e;
+    console.log(`[trailing] ${symbol}: threw — ${e.message}`);
     return null;
   }
 }

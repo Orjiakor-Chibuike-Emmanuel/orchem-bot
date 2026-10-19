@@ -123,6 +123,22 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
   if (!API_KEY || !API_SECRET) return { skipped: true, reason: 'Bybit API keys not configured' };
   if (!slLevel) return { skipped: true, reason: 'no stop-loss level — refusing to open a position with no stop' };
 
+  // Never trust an incoming TP/SL blindly, even from our own upstream code
+  // — this is the last line of defense before real money (demo or not)
+  // moves. A stop on the wrong side of entry is refused outright (Bybit
+  // would reject it anyway, but better to know why). A bad take-profit is
+  // dropped rather than refusing the whole trade over it — the position
+  // still opens with its stop, just without an automatic TP.
+  const slOnRightSide = direction === 'bull' ? slLevel < entryPrice : slLevel > entryPrice;
+  if (!slOnRightSide) {
+    return { skipped: true, reason: `stop-loss $${slLevel} is on the wrong side of entry $${entryPrice} for a ${direction === 'bull' ? 'long' : 'short'} — refusing to place` };
+  }
+  let safeTp = tpLevel;
+  if (safeTp) {
+    const tpOnRightSide = direction === 'bull' ? safeTp > entryPrice : safeTp < entryPrice;
+    if (!tpOnRightSide) safeTp = null;
+  }
+
   const info = await getInstrumentInfo(symbol);
   if (!info) return { skipped: true, reason: `${symbol} not available on Bybit's linear market` };
 
@@ -136,7 +152,7 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
   }
 
   const side = direction === 'bull' ? 'Buy' : 'Sell';
-  const roundedTp = tpLevel ? roundToStep(tpLevel, info.tickSize) : undefined;
+  const roundedTp = safeTp ? roundToStep(safeTp, info.tickSize) : undefined;
   const roundedSl = roundToStep(slLevel, info.tickSize);
 
   const params = {
