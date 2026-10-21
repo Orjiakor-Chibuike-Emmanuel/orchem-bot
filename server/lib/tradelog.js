@@ -160,18 +160,11 @@ async function runAutoOutcomeChecks() {
     await new Promise(r => setTimeout(r, 200));
   }
 
-  // Everything else (auto-trading was off, or the order was skipped) has
-  // no real position to ask about — fall back to the candle-replay guess,
-  // same 2h grace period as before so there's enough history to check.
-  const pendingCandle = stateMod.tradeLog.filter(t =>
-    !t.bybitPlaced &&
-    (!t.autoOutcome || t.autoOutcome === 'open') &&
-    t.loggedAt && (Date.now() - t.loggedAt) >= (2 * 60 * 60 * 1000)
-  );
-  for (const trade of pendingCandle) {
-    await checkTradeOutcome(trade);
-    await new Promise(r => setTimeout(r, 200));
-  }
+  // Trades that never executed on Bybit (auto-trading off, order refused or
+  // skipped, e.g. a contract that needs a signed agreement) have no real
+  // position to ask about. They are deliberately left PENDING for the user
+  // to mark WIN/LOSS by hand — replaying candles against SL/TP only ever
+  // produced a guess. (checkTradeOutcome is kept for reference/manual use.)
 }
 
 function setOutcome(id, outcome) {

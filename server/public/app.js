@@ -138,9 +138,15 @@ function renderConfirmedBadge(watchlist) {
 
 function renderStats(tradeLog) {
   const confirmed = tradeLog.filter(t => t.entryStatus === 'confirmed');
-  const wins = confirmed.filter(t => t.outcome === 'win' || t.autoOutcome === 'win').length;
-  const losses = confirmed.filter(t => t.outcome === 'loss' || t.autoOutcome === 'loss').length;
-  const pending = confirmed.filter(t => (t.outcome === 'pending') && (!t.autoOutcome || t.autoOutcome === 'open')).length;
+  // One effective result per trade: a manual mark wins over any automatic
+  // result, so a trade marked by hand is never counted twice (or against
+  // itself) when the auto-check disagrees.
+  const effective = t => (t.outcome && t.outcome !== 'pending' && t.outcome !== 'n/a')
+    ? t.outcome
+    : (t.autoOutcome === 'win' || t.autoOutcome === 'loss') ? t.autoOutcome : 'pending';
+  const wins = confirmed.filter(t => effective(t) === 'win').length;
+  const losses = confirmed.filter(t => effective(t) === 'loss').length;
+  const pending = confirmed.filter(t => effective(t) === 'pending').length;
   const invalidated = tradeLog.filter(t => t.entryStatus === 'invalidated').length;
   const exhausted = tradeLog.filter(t => t.entryStatus === 'exhausted').length;
   const winRate = (wins + losses) > 0 ? Math.round((wins / (wins + losses)) * 100) : null;
