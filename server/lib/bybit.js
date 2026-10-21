@@ -84,11 +84,13 @@ async function getPosition(symbol) {
   return result && result.list && result.list[0];
 }
 
-async function updateTradingStop(symbol, { stopLoss, takeProfit, trailingStop }) {
+async function updateTradingStop(symbol, { stopLoss, takeProfit, trailingStop, activePrice }) {
   const params = { category: 'linear', symbol, tpslMode: 'Full', positionIdx: 0 };
   if (stopLoss) params.stopLoss = String(stopLoss);
   if (takeProfit) params.takeProfit = String(takeProfit);
   if (trailingStop) params.trailingStop = String(trailingStop);
+  // Trailing only starts working once the market reaches this price.
+  if (activePrice) params.activePrice = String(activePrice);
   await bybitRequest('POST', '/v5/position/trading-stop', params);
 }
 
@@ -264,34 +266,45 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
       }
     }
 
-    const updatePayload = { stopLoss: finalSl, takeProfit: finalTp };
-
-    // Trailing stop — a price DISTANCE (not a %), activating immediately
-    // from the real entry per the chosen behavior: no activation price
-    // set, so Bybit starts tracking the best price reached from the
-    // moment this call lands, not after the trade is already in profit.
-    if (trailingPct && trailingPct > 0) {
-      const trailingDistance = roundToStep(realEntry * (trailingPct / 100), info.tickSize);
-      if (trailingDistance > 0) {
-        updatePayload.trailingStop = trailingDistance;
-        trailingSet = trailingDistance;
-      }
-    }
-
-    if (priceShifted || trailingSet) {
-      await updateTradingStop(symbol, updatePayload);
-      if (priceShifted) {
-        console.log(`[bybit] re-anchored ${symbol} SL/TP to actual fill $${realEntry} (estimated $${entryPrice}) — SL now $${finalSl}${finalTp ? `, TP $${finalTp}` : ''}`);
-      }
-      if (trailingSet) {
-        console.log(`[bybit] trailing stop set for ${symbol}: $${trailingSet} (${trailingPct}%) from entry $${realEntry}`);
-      }
+    // Re-anchored SL/TP go in their own call, so nothing about the trailing
+    // stop below can ever prevent them from being applied.
+    if (priceShifted) {
+      await updateTradingStop(symbol, { stopLoss: finalSl, takeProfit: finalTp });
+      console.log(`[bybit] re-anchored ${symbol} SL/TP to actual fill $${realEntry} (estimated $${entryPrice}) — SL now $${finalSl}${finalTp ? `, TP $${finalTp}` : ''}`);
     }
   } catch (e) {
-    console.log(`[bybit] could not re-anchor SL/TP or set trailing stop for ${symbol} — stop stays at the pre-trade estimate, no trailing:`, e.message);
+    console.log(`[bybit] could not re-anchor SL/TP for ${symbol} — stop stays at the pre-trade estimate:`, e.message);
   }
 
-  return { placed: true, orderId: result.orderId, symbol, side, qty: roundedQty, entry: realEntry, tp: finalTp, sl: finalSl, trailing: trailingSet };
+  // Trailing stop — a price DISTANCE (not a %) that only ARMS once the trade
+  // is in profit: activePrice sits one trailing distance beyond the entry, so
+  // by the time it starts working its trigger is already at break-even, and
+  // it can never turn a trade that hasn't first moved into profit into a
+  // trailing-stop loss. Until then only the SL protects the position. (It
+  // used to start from entry, which let ordinary noise shake a trade out
+  // long before the SL level — 1000PEPE, 21 Oct.) Separate call and its own
+  // try/catch: if Bybit rejects it, SL/TP are unaffected and we simply
+  // report no trailing.
+  let trailingActivePrice = null;
+  if (trailingPct && trailingPct > 0) {
+    try {
+      const trailingDistance = roundToStep(realEntry * (trailingPct / 100), info.tickSize);
+      if (trailingDistance > 0) {
+        const activePrice = roundToStep(
+          direction === 'bull' ? realEntry + trailingDistance : realEntry - trailingDistance,
+          info.tickSize
+        );
+        await updateTradingStop(symbol, { trailingStop: trailingDistance, activePrice });
+        trailingSet = trailingDistance;
+        trailingActivePrice = activePrice;
+        console.log(`[bybit] trailing stop set for ${symbol}: $${trailingDistance} (${trailingPct}%), arms at $${activePrice} (entry $${realEntry})`);
+      }
+    } catch (e) {
+      console.log(`[bybit] could not set trailing stop for ${symbol} — no trailing on this trade:`, e.message);
+    }
+  }
+
+  return { placed: true, orderId: result.orderId, symbol, side, qty: roundedQty, entry: realEntry, tp: finalTp, sl: finalSl, trailing: trailingSet, trailingActivePrice };
 }
 
 module.exports = { AUTO_TRADE, placeOrder, getInstrumentInfo, bybitRequest, getOpenPosition, getClosedPnl };

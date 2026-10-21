@@ -68,7 +68,7 @@ function renderConfirmed(list) {
     // Only call it "active" when Bybit actually confirmed the trailing
     // call — otherwise it's just the suggested % the bot computed.
     const trailingCell = r.trailing
-      ? `<span>trailing <b>$${fmt(r.trailing)}</b> (${item.trailingPct}%, active)</span>`
+      ? `<span>trailing <b>$${fmt(r.trailing)}</b> (${item.trailingPct}%, arms at $${fmt(r.trailingActivePrice)})</span>`
       : item.trailingPct
         ? `<span>trailing <b>${item.trailingPct}%</b> (suggested, not set)</span>`
         : `<span>trailing <b>—</b></span>`;

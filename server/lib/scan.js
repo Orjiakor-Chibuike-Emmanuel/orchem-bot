@@ -26,6 +26,11 @@ const { calcRR } = require('./boundary');
 const MAX_RISK_USD = parseFloat(process.env.MAX_RISK_USD || '35');
 const MARGIN_PER_TRADE_USD = parseFloat(process.env.MARGIN_PER_TRADE_USD || '150');
 const MAX_SENSIBLE_LEVERAGE = parseFloat(process.env.MAX_SENSIBLE_LEVERAGE || '50');
+// A target this close to entry isn't worth chasing: the nearer a pair is to
+// its TP, the less that level means and the easier it is to get pushed
+// around or reversed (1000PEPE, 21 Oct: 0.98% TP, stopped out within 15
+// minutes). Below this, the signal is invalidated at confirmation time.
+const MIN_CONFIRM_TP_PCT = parseFloat(process.env.MIN_CONFIRM_TP_PCT || '3.5');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -298,6 +303,30 @@ async function run2HConfirmation() {
           (item.direction === 'bull' && confirmTp.price > entryPrice) ||
           (item.direction === 'bear' && confirmTp.price < entryPrice)
         );
+
+        // TP too close to the confirmed entry -> not a trade worth taking.
+        // Undo the "confirmed" marking made above and invalidate it instead:
+        // no order, no entry alert, logged as INVALIDATED with the reason.
+        // (No TP found at all is a different case and is left as before.)
+        if (tpValid) {
+          const tpPctAtEntry = parseFloat(calcRR(entryPrice, confirmTp.price));
+          if (tpPctAtEntry < MIN_CONFIRM_TP_PCT) {
+            sets.confirmed.delete(item.symbol);
+            item.alerted = false;
+            item.invalidated = true;
+            sets.invalidated.add(item.symbol);
+            stateMod.saveAlertSets(sets);
+            item.invalidReason = `TP only ${tpPctAtEntry}% away at confirmation (minimum ${MIN_CONFIRM_TP_PCT}%) — skipped`;
+            console.log(`[confirm] ${item.symbol} invalidated: ${item.invalidReason}`);
+            if (!item.invalidatedLogged) {
+              item.invalidatedLogged = true;
+              logTrade(item, result2h, 'invalidated');
+            }
+            confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice });
+            await sleep(80);
+            continue;
+          }
+        }
         const slValid = confirmSl && (
           (item.direction === 'bull' && confirmSl.price < entryPrice) ||
           (item.direction === 'bear' && confirmSl.price > entryPrice)
@@ -417,7 +446,7 @@ async function run2HConfirmation() {
         // the trailingStop call succeeded — a suggested % with no exchange
         // confirmation is not "set on Bybit", it's just a number.
         const trailingText = bybitResult.trailing
-          ? `\n📌 Trailing Stop: $${bybitResult.trailing} (${item.trailingPct}%, active from entry — set on Bybit)`
+          ? `\n📌 Trailing Stop: $${bybitResult.trailing} (${item.trailingPct}%) — arms once in profit at $${bybitResult.trailingActivePrice}, then locks break-even and trails (set on Bybit)`
           : item.trailingPct
             ? `\n📌 Suggested trailing: ${item.trailingPct}% (not applied automatically — set manually)`
             : '';

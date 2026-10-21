@@ -54,7 +54,8 @@ function logTrade(item, result2h, entryStatus = 'confirmed') {
     actualPnl: null,
     autoOutcome: entryStatus === 'confirmed' ? 'open' : 'n/a',
     outcome: entryStatus === 'confirmed' ? 'pending' : 'n/a',
-    notes: ''
+    // For invalidated entries, why (e.g. TP too close); editable later like any note.
+    notes: item.invalidReason || ''
   };
   stateMod.tradeLog.unshift(entry);
   stateMod.saveTradeLog();
