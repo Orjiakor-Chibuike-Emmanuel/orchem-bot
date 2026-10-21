@@ -18,7 +18,7 @@ const {
   calcPairExhaustionThreshold, isRecentMoveExhausted, tightStopLevel,
   calcPositionSize, calcSuggestedTrailing, RECENT_MOVE_EXHAUSTION_PCT
 } = require('./filters');
-const { sendTelegram } = require('./telegram');
+const { sendTelegram, escHtml } = require('./telegram');
 const bybit = require('./bybit');
 const { fmt, logTrade } = require('./tradelog');
 const { calcRR } = require('./boundary');
@@ -396,14 +396,14 @@ async function run2HConfirmation() {
         const bybitText = bybitResult.placed
           ? `\n🤖 Bybit Demo: order placed (qty ${bybitResult.qty}, SL $${bybitResult.sl}${bybitResult.tp ? `, TP $${bybitResult.tp}` : ''})`
           : bybitResult.error
-            ? `\n🤖 Bybit Demo: FAILED — ${bybitResult.reason} (manual entry needed)`
-            : (bybit.AUTO_TRADE ? `\n🤖 Bybit Demo: skipped — ${bybitResult.reason}` : '');
+            ? `\n🤖 Bybit Demo: FAILED — ${escHtml(bybitResult.reason)} (manual entry needed)`
+            : (bybit.AUTO_TRADE ? `\n🤖 Bybit Demo: skipped — ${escHtml(bybitResult.reason)}` : '');
         sets.tg.add(item.symbol);
         stateMod.saveAlertSets(sets);
         const tgMsg = `${dirEmoji} <b>ENTRY CONFIRMED</b>\n`
           + `<b>${item.symbol.replace('USDT', '')}/USDT</b> · ${dir}\n`
-          + `Signal: ${item.signal1d}\n`
-          + `Confirmation: ${result2h.label}\n`
+          + `Signal: ${escHtml(item.signal1d)}\n`
+          + `Confirmation: ${escHtml(result2h.label)}\n`
           + `Confirmation Price: $${fmt(item.confirmationPrice)} · ${result2h.dateStr}`
           + (bybitResult.placed && item.entryPrice !== item.confirmationPrice
               ? `\nEntry (actual fill): $${fmt(item.entryPrice)}`

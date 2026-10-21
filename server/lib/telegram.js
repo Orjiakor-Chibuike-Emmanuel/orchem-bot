@@ -24,19 +24,49 @@ if (!TG_RECIPIENTS.length) {
   console.log('[telegram] WARNING: TG_RECIPIENTS is not set — alerts will not be sent.');
 }
 
+// Messages are sent in HTML mode (for the <b> tags), so any literal <, > or &
+// in dynamic text must be escaped or Telegram rejects the WHOLE message with
+// "can't parse entities". Every bearish alert contains a literal "<" in its
+// confirmation line ("Bear Breakout < $X"), which is why short alerts were
+// silently failing while long ones went through.
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+async function postTelegram(chatId, text, parseMode) {
+  const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+  const payload = { chat_id: chatId, text };
+  if (parseMode) payload.parse_mode = parseMode;
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000)
+  });
+}
+
 async function sendTelegramOne(chatId, message) {
   if (!TG_TOKEN) return false;
   try {
-    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' }),
-      signal: AbortSignal.timeout(10000)
-    });
+    const res = await postTelegram(chatId, message, 'HTML');
     if (res.ok) return true;
     const body = await res.text().catch(() => '');
     console.log('[telegram] send FAILED for', chatId, res.status, body);
+    // Safety net: if Telegram rejected the formatting itself, resend as plain
+    // text (tags stripped, entities unescaped) instead of losing the alert —
+    // an unformatted alert beats no alert.
+    if (res.status === 400 && /parse entities/i.test(body)) {
+      const plain = message.replace(/<\/?[a-z][^>]*>/gi, '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      const res2 = await postTelegram(chatId, plain, null);
+      if (res2.ok) {
+        console.log('[telegram] resent as plain text for', chatId);
+        return true;
+      }
+    }
     return false;
   } catch (e) {
     console.log('[telegram] network error for', chatId, ':', e.message);
@@ -112,4 +142,4 @@ async function testSend() {
   return { ok: results.every(r => r.ok), tokenConfigured: true, recipients: TG_RECIPIENTS, results };
 }
 
-module.exports = { sendTelegram, sendTelegramOne, flushTgQueue, testSend, TG_RECIPIENTS };
+module.exports = { escHtml, sendTelegram, sendTelegramOne, flushTgQueue, testSend, TG_RECIPIENTS };

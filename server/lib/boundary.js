@@ -325,8 +325,12 @@ function analyse2H(symbol, candles2h, requiredDirection, signalHigh, signalLow, 
 
       if (direction === requiredDirection) {
         const closeTime = c.time + (30 * 60 * 1000);
+        // Server runs in UTC, which made Telegram show 02:30 for a candle that
+        // closed at 03:30 Lagos time. Format in the user's timezone instead
+        // (override with DISPLAY_TZ if it ever changes).
         const dateStr = new Date(closeTime).toLocaleString('en-GB', {
-          day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+          day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+          timeZone: process.env.DISPLAY_TZ || 'Africa/Lagos'
         });
         const label = breaksBull
           ? `30min Bull Breakout > $${fmt(boundaryHigh)}`
