@@ -137,6 +137,22 @@ async function startScan() {
 
     const sets = stateMod.alertSets();
 
+    // The watchlist is rebuilt from scratch every scan, so anything learned
+    // AFTER the first sighting of a signal (its confirmation: the real SL/TP,
+    // fill, size, Bybit result, source tags) would be wiped and replaced by
+    // the 1D scan's rough pre-confirmation estimates on the next rebuild. That
+    // is why a confirmed trade's SL on the dashboard could "change" ~30 min
+    // after the alert. Carry those fields over from the previous entry for the
+    // same signal (same symbol, direction and day).
+    const CARRY_FIELDS = [
+      'confirmed', 'confirmedAt', 'confirmationPrice', 'entryPrice',
+      'tpLevel', 'tpGain', 'tpEstimated', 'tpSource',
+      'slLevel', 'slRisk', 'slEstimated', 'slSource',
+      'sizeQty', 'sizeNotional', 'sizeLeverage',
+      'bybitResult', 'invalidatedLogged'
+    ];
+    const prevBySymbol = new Map((stateMod.state.watchlist || []).map(i => [i.symbol, i]));
+
     const newWatchlist = allSignals.map(r => ({
       symbol: r.symbol,
       direction: r.direction,
@@ -157,6 +173,19 @@ async function startScan() {
       alerted: sets.confirmed.has(r.symbol),
       invalidated: sets.invalidated.has(r.symbol)
     }));
+
+    for (const item of newWatchlist) {
+      const prev = prevBySymbol.get(item.symbol);
+      if (!prev || prev.direction !== item.direction || prev.signalTimestamp !== item.signalTimestamp) continue;
+      // First-seen time, so signal age keeps counting instead of resetting
+      // to "fresh" on every scan.
+      if (prev.detectedAt) item.detectedAt = prev.detectedAt;
+      if (prev.alerted) {
+        for (const f of CARRY_FIELDS) {
+          if (prev[f] !== undefined) item[f] = prev[f];
+        }
+      }
+    }
 
     stateMod.state.watchlist = newWatchlist;
     stateMod.state.lastScan = Date.now();
