@@ -5,6 +5,7 @@ try {
   require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 } catch (_) {}
 
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -75,8 +76,44 @@ async function guardedConfirm() {
 }
 
 /* ═══════════════════════════════════════
+   ADMIN ACCESS
+   The dashboard link gets shared (e.g. with the Telegram group), so
+   reading is open to anyone — watchlist, logbook, win rate, CSV — but
+   anything that CHANGES something or sends something (marking WIN/LOSS,
+   editing notes, forcing a scan, the Telegram test) requires ADMIN_KEY.
+   If ADMIN_KEY isn't set on the server those actions are disabled
+   entirely rather than left open.
+═══════════════════════════════════════ */
+const ADMIN_KEY = process.env.ADMIN_KEY || '';
+
+function adminKeyMatches(given) {
+  if (!ADMIN_KEY || !given) return false;
+  // Compare fixed-length digests so the check is constant-time.
+  const a = crypto.createHash('sha256').update(String(given)).digest();
+  const b = crypto.createHash('sha256').update(ADMIN_KEY).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Key goes in the x-admin-key header. `allowQuery` additionally accepts
+// ?key=... (only used for the Telegram test, so it can be opened straight
+// from a browser tab).
+function requireAdmin(allowQuery = false) {
+  return (req, res, next) => {
+    if (!ADMIN_KEY) {
+      return res.status(503).json({ error: 'ADMIN_KEY is not set on the server, so admin actions are disabled' });
+    }
+    const given = req.get('x-admin-key') || (allowQuery ? req.query.key : '');
+    if (!adminKeyMatches(given)) return res.status(401).json({ error: 'admin key required' });
+    next();
+  };
+}
+
+/* ═══════════════════════════════════════
    API
 ═══════════════════════════════════════ */
+
+// Lets the dashboard check whether a stored key is valid.
+app.get('/api/admin-check', requireAdmin(), (req, res) => res.json({ admin: true }));
 
 // Full dashboard state in one call: watchlist + confirm results + recent
 // trade log + bot status. The frontend polls this.
@@ -107,7 +144,7 @@ app.get('/api/trade-log/export', (req, res) => {
   res.send(csv);
 });
 
-app.post('/api/trade-log/:id/outcome', (req, res) => {
+app.post('/api/trade-log/:id/outcome', requireAdmin(), (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { outcome } = req.body || {};
   if (!['win', 'loss', 'skip'].includes(outcome)) return res.status(400).json({ error: 'invalid outcome' });
@@ -116,7 +153,7 @@ app.post('/api/trade-log/:id/outcome', (req, res) => {
   res.json(trade);
 });
 
-app.post('/api/trade-log/:id/notes', (req, res) => {
+app.post('/api/trade-log/:id/notes', requireAdmin(), (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { notes } = req.body || {};
   const trade = tradelog.saveNote(id, notes || '');
@@ -126,7 +163,7 @@ app.post('/api/trade-log/:id/notes', (req, res) => {
 
 // Manual trigger — useful for testing after deploy, or if you want to
 // force a rescan without waiting for the next timer tick.
-app.post('/api/scan', async (req, res) => {
+app.post('/api/scan', requireAdmin(), async (req, res) => {
   res.json({ started: true });
   startScan().catch(e => console.log('[scan] manual trigger error:', e.message));
 });
@@ -139,7 +176,7 @@ app.get('/api/health', (req, res) => {
 // message and reports back exactly what happened (missing token/recipient
 // env vars, a Telegram API error, a network error), instead of a log line
 // you can't see. Open this URL directly in a browser or curl it.
-app.get('/api/test-telegram', async (req, res) => {
+app.get('/api/test-telegram', requireAdmin(true), async (req, res) => {
   const result = await require('./lib/telegram').testSend();
   res.json(result);
 });

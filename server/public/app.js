@@ -7,6 +7,54 @@
 ═══════════════════════════════════════ */
 
 const POLL_MS = 15000;
+// Admin mode: the dashboard is viewable by anyone with the link, but marking
+// WIN/LOSS and forcing a scan need the admin key (stored only in this
+// browser). Without it those controls are hidden or read-only.
+let adminKey = '';
+try { adminKey = localStorage.getItem('orchemAdminKey') || ''; } catch (_) {}
+let isAdmin = false;
+
+function adminHeaders(extra) {
+  return Object.assign({ 'x-admin-key': adminKey }, extra || {});
+}
+
+function updateAdminUi() {
+  const scanBtn = document.getElementById('scan-btn');
+  const adminBtn = document.getElementById('admin-btn');
+  if (scanBtn) scanBtn.style.display = isAdmin ? '' : 'none';
+  if (adminBtn) adminBtn.textContent = isAdmin ? 'ADMIN ✓' : 'ADMIN';
+}
+
+async function verifyAdmin() {
+  isAdmin = false;
+  if (adminKey) {
+    try {
+      const res = await fetch('/api/admin-check', { headers: adminHeaders() });
+      isAdmin = res.ok;
+      if (res.status === 401) {
+        adminKey = '';
+        try { localStorage.removeItem('orchemAdminKey'); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+  updateAdminUi();
+  poll();
+}
+
+async function toggleAdmin() {
+  if (isAdmin) {
+    adminKey = '';
+    try { localStorage.removeItem('orchemAdminKey'); } catch (_) {}
+    return verifyAdmin();
+  }
+  const entered = prompt('Admin key');
+  if (!entered) return;
+  adminKey = entered.trim();
+  try { localStorage.setItem('orchemAdminKey', adminKey); } catch (_) {}
+  await verifyAdmin();
+  if (!isAdmin) alert('That key was not accepted.');
+}
+
 let prevConfirmed = new Set(); // to detect newly-confirmed channels for the "snap" animation
 
 function fmt(p) {
@@ -162,10 +210,12 @@ function renderStats(tradeLog) {
 }
 
 async function setOutcome(id, outcome) {
-  await fetch(`/api/trade-log/${id}/outcome`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+  if (!isAdmin) return;
+  const res = await fetch(`/api/trade-log/${id}/outcome`, {
+    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ outcome })
   });
+  if (res.status === 401) return verifyAdmin();
   poll();
 }
 
@@ -203,8 +253,8 @@ function renderLog(tradeLog) {
       <span class="log-status ${t.entryStatus}">${t.entryStatus.toUpperCase()}</span>
       <span class="log-note">${t.signal1d || ''}${t.notes ? ' · ' + t.notes : ''}${fillNote}${pnlNote}</span>
       ${showButtons ? `<span class="log-outcome">
-        <button class="out-btn ${outcome === 'win' ? 'active win' : ''}" onclick="setOutcome(${t.id},'win')">WIN</button>
-        <button class="out-btn ${outcome === 'loss' ? 'active loss' : ''}" onclick="setOutcome(${t.id},'loss')">LOSS</button>${sourceTag}
+        <button class="out-btn ${outcome === 'win' ? 'active win' : ''}" ${isAdmin ? `onclick="setOutcome(${t.id},'win')"` : 'disabled'}>WIN</button>
+        <button class="out-btn ${outcome === 'loss' ? 'active loss' : ''}" ${isAdmin ? `onclick="setOutcome(${t.id},'loss')"` : 'disabled'}>LOSS</button>${sourceTag}
       </span>` : '<span></span>'}
     </div>`;
   }).join('');
@@ -246,9 +296,14 @@ async function poll() {
 }
 
 document.getElementById('scan-btn').addEventListener('click', async () => {
-  await fetch('/api/scan', { method: 'POST' });
+  if (!isAdmin) return;
+  const res = await fetch('/api/scan', { method: 'POST', headers: adminHeaders() });
+  if (res.status === 401) return verifyAdmin();
   poll();
 });
 
-poll();
+document.getElementById('admin-btn').addEventListener('click', toggleAdmin);
+
+updateAdminUi();
+verifyAdmin();
 setInterval(poll, POLL_MS);

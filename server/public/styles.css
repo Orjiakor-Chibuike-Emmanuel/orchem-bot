@@ -498,3 +498,5 @@ footer.foot {
   .status-cluster { font-size: 0.68rem; gap: 12px; }
   .header-inner { gap: 10px; }
 }
+
+.out-btn:disabled { cursor: default; }
