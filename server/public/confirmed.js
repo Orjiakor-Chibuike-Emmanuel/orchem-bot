@@ -28,6 +28,7 @@ function timeAgo(ts) {
 // "how was this calculated?" never has to be reverse-engineered from a
 // chart after the fact.
 function srcTag(source) {
+  if (source === 'aux-range') return ' <span class="src-tag">aux range</span>';
   if (source === 'tight-prior-candle') return ' <span class="src-tag">tight</span>';
   if (source === 'swing-level') return ' <span class="src-tag">swing</span>';
   if (source === 'range-extreme') return ' <span class="src-tag">range</span>';

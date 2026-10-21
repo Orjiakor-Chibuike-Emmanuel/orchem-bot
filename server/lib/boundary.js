@@ -177,6 +177,42 @@ function resolveSL(price, levels, closed, direction) {
   return valid ? { price: fb, estimated: true, source: 'range-extreme' } : null;
 }
 
+/* AUXILIARY RANGE (30min), used for the stop-loss.
+   Same idea as the 1D boundary: a "parent" candle, then candles that CLOSE
+   inside the range are auxiliary and stretch the range with their wicks;
+   a close outside the range starts a new parent. A bullish break is a close
+   above the stretched high, a bearish break a close below the stretched low.
+   The stop sits at the far edge: the lowest shadow of the whole aux market
+   for a long, the highest shadow for a short. That is exactly the level
+   whose break would invalidate the setup. `candles` must be oldest-first
+   and must NOT include the confirmation candle itself. */
+function findAuxRange(candles) {
+  if (!candles || !candles.length) return null;
+  let parentIdx = 0;
+  let high = candles[0].high;
+  let low = candles[0].low;
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    if (c.close > high || c.close < low) {
+      parentIdx = i;
+      high = c.high;
+      low = c.low;
+    } else {
+      if (c.high > high) high = c.high;
+      if (c.low < low) low = c.low;
+    }
+  }
+  return { parentIdx, parentTime: candles[parentIdx].time, high, low, auxCount: candles.length - 1 - parentIdx };
+}
+
+function auxRangeStopLevel(entryPrice, candles, direction) {
+  const r = findAuxRange(candles);
+  if (!r) return null;
+  const level = direction === 'bull' ? r.low : r.high;
+  const valid = direction === 'bull' ? level < entryPrice * 0.999 : level > entryPrice * 1.001;
+  return valid ? { price: level, estimated: false, source: 'aux-range', parentTime: r.parentTime, auxCount: r.auxCount } : null;
+}
+
 function getSignalAge(signalTimestamp) {
   if (!signalTimestamp) return null;
   const hours = (Date.now() - signalTimestamp) / (1000 * 60 * 60);
@@ -363,5 +399,5 @@ module.exports = {
   EXTREME_NEAR_PCT, EXTREME_MOVE_PCT, MIN_TP_PCT,
   classifyPattern, findBoundary, findSwingLevels, nearestLevel, isTooCloseToExtreme,
   calcMA, avgVolume, findTPLevel, calcRR, findSLLevel, rangeExtremeLevel,
-  resolveTP, resolveSL, getSignalAge, calcStrength, analyseSymbol, analyse2H
+  resolveTP, resolveSL, findAuxRange, auxRangeStopLevel, getSignalAge, calcStrength, analyseSymbol, analyse2H
 };

@@ -12,10 +12,10 @@
 const stateMod = require('./state');
 const { fetchSymbols, fetchKlines, fetch2HKlines, RateLimitError } = require('./bybitMarket');
 const {
-  analyseSymbol, analyse2H, findSwingLevels, resolveTP
+  analyseSymbol, analyse2H, findSwingLevels, resolveTP, auxRangeStopLevel
 } = require('./boundary');
 const {
-  calcPairExhaustionThreshold, isRecentMoveExhausted, tightStopLevel,
+  calcPairExhaustionThreshold, isRecentMoveExhausted,
   calcPositionSize, calcSuggestedTrailing, RECENT_MOVE_EXHAUSTION_PCT
 } = require('./filters');
 const { sendTelegram, escHtml } = require('./telegram');
@@ -255,16 +255,15 @@ async function run2HConfirmation() {
           if (e instanceof RateLimitError) throw e;
         }
 
-        // SL is now ALWAYS the high/low of the 30min candle that closed
-        // right before the breakout/confirmation candle — the "tight"
-        // method, every single time. It no longer falls back to a
-        // swing-level or range-extreme stop when the tight one looks too
-        // close; that silent method-switching is exactly what made the
-        // A/USDT SL impossible to explain after the fact. If the prior
-        // candle doesn't exist (breakout fired on the very first checked
-        // candle) there is simply no SL — "none found, size manually" —
-        // instead of quietly reaching for a different, wider number.
-        confirmSl = tightStopLevel(entryPrice, result2h.priorCandle, item.direction);
+        // SL is the far edge of the 30min auxiliary range leading into the
+        // confirmation candle: the lowest shadow of the whole aux market for
+        // a long, the highest shadow for a short (see findAuxRange). One
+        // method, every time — no silent fallback to swing/range levels.
+        // Uses the full fetched window (not only candles since the 1D signal)
+        // because the range can start before UTC midnight. If the range
+        // can't give a valid stop there is no SL: "none found, size manually".
+        const beforeConfirm = (allCandles2h || []).filter(c => c.time < result2h.confirmTime);
+        confirmSl = auxRangeStopLevel(entryPrice, beforeConfirm, item.direction);
 
         const tpValid = confirmTp && (
           (item.direction === 'bull' && confirmTp.price > entryPrice) ||
@@ -378,7 +377,7 @@ async function run2HConfirmation() {
 
         const tpTag = item.tpEstimated ? ' ⚠️est.' : '';
         const slTag = item.slEstimated ? ' ⚠️est.' : '';
-        const srcLabel = s => s === 'tight-prior-candle' ? ' [tight: prior candle]' : s === 'swing-level' ? ' [swing level]' : s === 'range-extreme' ? ' [range extreme]' : '';
+        const srcLabel = s => s === 'aux-range' ? ' [aux range edge]' : s === 'tight-prior-candle' ? ' [tight: prior candle]' : s === 'swing-level' ? ' [swing level]' : s === 'range-extreme' ? ' [range extreme]' : '';
         const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}${srcLabel(item.tpSource)}` : '\n🎯 TP: none found — size manually';
         const slText = item.slLevel ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)${slTag}${srcLabel(item.slSource)}` : '\n🛑 SL: none found — size manually';
         const levTag = item.sizeLeverage && item.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? ' ⚠️ SL too tight for this margin — consider skipping or a wider stop' : '';
