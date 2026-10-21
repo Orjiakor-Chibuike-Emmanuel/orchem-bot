@@ -12,7 +12,7 @@
 const stateMod = require('./state');
 const { fetchSymbols, fetchKlines, fetch2HKlines, RateLimitError } = require('./binance');
 const {
-  analyseSymbol, analyse2H, findSwingLevels, resolveTP, resolveSL
+  analyseSymbol, analyse2H, findSwingLevels, resolveTP
 } = require('./boundary');
 const {
   calcPairExhaustionThreshold, isRecentMoveExhausted, tightStopLevel,
@@ -250,14 +250,21 @@ async function run2HConfirmation() {
             const freshClosed = freshKlines.slice(0, -1);
             const freshLevels = findSwingLevels(freshClosed);
             confirmTp = resolveTP(entryPrice, freshLevels, freshClosed, item.direction);
-            confirmSl = resolveSL(entryPrice, freshLevels, freshClosed, item.direction);
           }
         } catch (e) {
           if (e instanceof RateLimitError) throw e;
         }
 
-        const tightSl = tightStopLevel(entryPrice, result2h.priorCandle, item.direction);
-        if (tightSl) confirmSl = tightSl;
+        // SL is now ALWAYS the high/low of the 30min candle that closed
+        // right before the breakout/confirmation candle — the "tight"
+        // method, every single time. It no longer falls back to a
+        // swing-level or range-extreme stop when the tight one looks too
+        // close; that silent method-switching is exactly what made the
+        // A/USDT SL impossible to explain after the fact. If the prior
+        // candle doesn't exist (breakout fired on the very first checked
+        // candle) there is simply no SL — "none found, size manually" —
+        // instead of quietly reaching for a different, wider number.
+        confirmSl = tightStopLevel(entryPrice, result2h.priorCandle, item.direction);
 
         const tpValid = confirmTp && (
           (item.direction === 'bull' && confirmTp.price > entryPrice) ||
