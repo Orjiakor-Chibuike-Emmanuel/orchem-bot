@@ -7,13 +7,15 @@
    generated for Demo Trading only works here;
    it physically cannot touch a live balance.
 
-   Signals still come from Binance (that's
-   where the boundary-candle logic reads
-   candles from) — this module just takes a
-   CONFIRMED signal and opens the matching
-   position on Bybit's linear USDT-perpetual
-   market, since Bybit is where the account
-   actually lives.
+   Signals now also come from Bybit (see
+   bybitMarket.js — the boundary-candle logic
+   reads its candles from Bybit's public
+   mainnet market data, api.bybit.com, not
+   this module's api-demo.bybit.com) — this
+   module just takes a CONFIRMED signal and
+   opens the matching position on Bybit's
+   linear USDT-perpetual market, since Bybit
+   is where the account actually lives.
 
    Auto-trading is OFF unless BYBIT_AUTO_TRADE=true
    is explicitly set — the bot stays alert-only

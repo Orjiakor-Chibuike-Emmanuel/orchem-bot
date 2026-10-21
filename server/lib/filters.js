@@ -2,7 +2,7 @@
    RECENT-MOVE EXHAUSTION FILTER + TIGHT SL +
    POSITION SIZING — ported from index-v15.html
 ═══════════════════════════════════════ */
-const { apiFetch, safeJson, BINANCE, RateLimitError } = require('./binance');
+const { fetchKlines, RateLimitError } = require('./bybitMarket');
 
 const RECENT_MOVE_LOOKBACK_CANDLES = 8; // 8 x 30min = last ~4 hours
 const RECENT_MOVE_EXHAUSTION_PCT = 10;  // flat fallback only
@@ -13,13 +13,9 @@ const EXHAUSTION_PCT_CEILING = 20;
 
 async function calcPairExhaustionThreshold(symbol) {
   try {
-    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=48`);
-    const raw = await safeJson(r);
-    if (!Array.isArray(raw) || raw.length < 10) return RECENT_MOVE_EXHAUSTION_PCT;
-    const ranges = raw.map(k => {
-      const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]);
-      return close > 0 ? ((high - low) / close) * 100 : 0;
-    });
+    const candles = await fetchKlines(symbol, 48, '30m');
+    if (!Array.isArray(candles) || candles.length < 10) return RECENT_MOVE_EXHAUSTION_PCT;
+    const ranges = candles.map(c => c.close > 0 ? ((c.high - c.low) / c.close) * 100 : 0);
     const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
     const scaled = avgRange * EXHAUSTION_VOLATILITY_MULTIPLIER;
     return Math.min(EXHAUSTION_PCT_CEILING, Math.max(EXHAUSTION_PCT_FLOOR, scaled));
@@ -70,20 +66,12 @@ function calcPositionSize(entryPrice, slLevel, maxRiskUsd, marginUsd) {
 
 async function calcSuggestedTrailing(symbol) {
   try {
-    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=30m&limit=20`);
-    if (!r) {
-      console.log(`[trailing] ${symbol}: apiFetch returned null (request failed or non-OK — see [binance] log above)`);
+    const candles = await fetchKlines(symbol, 20, '30m');
+    if (!Array.isArray(candles) || candles.length < 5) {
+      console.log(`[trailing] ${symbol}: bad/short klines response, got ${Array.isArray(candles) ? candles.length : typeof candles}`);
       return null;
     }
-    const raw = await safeJson(r);
-    if (!Array.isArray(raw) || raw.length < 5) {
-      console.log(`[trailing] ${symbol}: bad/short klines response, got ${Array.isArray(raw) ? raw.length : typeof raw}`);
-      return null;
-    }
-    const ranges = raw.map(k => {
-      const high = parseFloat(k[2]), low = parseFloat(k[3]), close = parseFloat(k[4]);
-      return ((high - low) / close) * 100;
-    });
+    const ranges = candles.map(c => ((c.high - c.low) / c.close) * 100);
     const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
     const suggested = Math.max(0.5, (avgRange * 1.5)).toFixed(1);
     return parseFloat(suggested);

@@ -10,7 +10,7 @@
    on any browser tab, phone, or device at all.
 ═══════════════════════════════════════ */
 const stateMod = require('./state');
-const { fetchSymbols, fetchKlines, fetch2HKlines, RateLimitError } = require('./binance');
+const { fetchSymbols, fetchKlines, fetch2HKlines, RateLimitError } = require('./bybitMarket');
 const {
   analyseSymbol, analyse2H, findSwingLevels, resolveTP
 } = require('./boundary');
@@ -31,11 +31,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let scanning = false;
 
-// Binance bans an IP (HTTP 418) for a while — 2 minutes up to 3 days for
-// repeat offenders — if it sees requests coming in too fast. Once banned,
-// every further request gets an instant 418, and continuing to send them
-// only extends the ban. So: track the ban here, and refuse to start any
-// new scan/confirmation cycle until it's over.
+// Bybit's public IP limit (600 req/5s) returns a 403 if exceeded, with a
+// documented ~10min auto-lifting cooldown — far more forgiving than
+// Binance's old escalating-ban policy, but still worth tracking: once
+// limited, every further request gets instantly rejected again, and
+// continuing to send them only delays recovery. So: track the cooldown
+// here, and refuse to start any new scan/confirmation cycle until it's over.
 function isBanned() {
   return !!(stateMod.state.bannedUntil && Date.now() < stateMod.state.bannedUntil);
 }
@@ -52,7 +53,7 @@ function registerBan(retryAfterSec) {
     stateMod.state.bannedUntil = until;
     stateMod.save();
   }
-  console.log(`[scan] Binance rate-limited/banned this IP — pausing ALL Binance requests until ${new Date(stateMod.state.bannedUntil).toISOString()}`);
+  console.log(`[scan] Bybit rate-limited this IP — pausing ALL market-data requests until ${new Date(stateMod.state.bannedUntil).toISOString()}`);
 }
 
 async function startScan() {
@@ -61,7 +62,7 @@ async function startScan() {
     return;
   }
   if (isBanned()) {
-    console.log(`[scan] skipping — Binance ban still in effect for ${bannedSecondsLeft()}s`);
+    console.log(`[scan] skipping — Bybit rate-limit cooldown still in effect for ${bannedSecondsLeft()}s`);
     return;
   }
   scanning = true;
@@ -79,11 +80,10 @@ async function startScan() {
     const total = symbols.length;
     console.log(`[scan] scanning ${total} pairs...`);
 
-    // Paced deliberately slow: Binance futures gives an IP a 2400
-    // request-weight/min budget, but it also bans IPs that burst through
-    // hundreds of requests in a few seconds even if the total weight is
-    // within budget. 4 requests every 800ms (~5/sec, ~300 req/min) stays
-    // well clear of both the weight budget and that burst detection.
+    // Paced deliberately slow: Bybit's public IP limit is 600 requests/5s
+    // (~120/sec), far above what this needs — 4 requests every 800ms
+    // (~5/sec, ~300 req/min) stays well clear of it with a wide margin,
+    // same conservative pacing kept from the Binance version on purpose.
     const BATCH = 4;
     const BATCH_DELAY_MS = 800;
     for (let i = 0; i < total; i += BATCH) {
@@ -182,7 +182,7 @@ async function startScan() {
 
 async function run2HConfirmation() {
   if (isBanned()) {
-    console.log(`[confirm] skipping — Binance ban still in effect for ${bannedSecondsLeft()}s`);
+    console.log(`[confirm] skipping — Bybit rate-limit cooldown still in effect for ${bannedSecondsLeft()}s`);
     return;
   }
   const watchlist = stateMod.state.watchlist;

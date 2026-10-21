@@ -2,7 +2,7 @@
    TRADE LOG — ported from index-v15.html
 ═══════════════════════════════════════ */
 const stateMod = require('./state');
-const { apiFetch, safeJson, BINANCE } = require('./binance');
+const { fetchKlines } = require('./bybitMarket');
 const { getSignalAge } = require('./boundary');
 const bybit = require('./bybit');
 
@@ -73,11 +73,10 @@ async function checkTradeOutcome(trade) {
 
   try {
     const since = trade.loggedAt || Date.now() - (24 * 60 * 60 * 1000);
-    const r = await apiFetch(`${BINANCE}/fapi/v1/klines?symbol=${trade.symbol}&interval=30m&limit=50`);
-    const raw = await safeJson(r);
-    if (!Array.isArray(raw)) return;
+    const allCandles = await fetchKlines(trade.symbol, 50, '30m');
+    if (!Array.isArray(allCandles)) return;
 
-    const candles = raw.filter(k => k[0] >= since).map(k => ({ high: parseFloat(k[2]), low: parseFloat(k[3]) }));
+    const candles = allCandles.filter(c => c.time >= since).map(c => ({ high: c.high, low: c.low }));
     if (!candles.length) return;
 
     const isBull = trade.direction === 'bull';

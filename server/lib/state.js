@@ -57,7 +57,7 @@ const DEFAULT_STATE = () => ({
   auxResults: [],
   lastScan: null,
   status: 'IDLE',
-  bannedUntil: null, // timestamp — set when Binance returns 418/429, checked before starting any new scan
+  bannedUntil: null, // timestamp — set when Bybit's market-data API rate-limits this IP, checked before starting any new scan
   tgQueue: [],
   alertState: {
     date: todayUTCStr(),

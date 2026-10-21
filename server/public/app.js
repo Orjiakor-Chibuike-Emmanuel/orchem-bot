@@ -214,7 +214,7 @@ async function poll() {
     if (data.status === 'BANNED') {
       dot.className = 'led on-red';
       const mins = Math.ceil((data.bannedMsLeft || 0) / 60000);
-      text.textContent = `BINANCE RATE-LIMITED — ${mins}m`;
+      text.textContent = `BYBIT RATE-LIMITED — ${mins}m`;
     } else if (data.status === 'SCANNING') {
       dot.className = 'led on-blue';
       text.textContent = 'SCANNING';
