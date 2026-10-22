@@ -93,7 +93,7 @@ async function fetchSymbols() {
 // interval keeps the same '1d' / '30m' strings the rest of the codebase
 // already calls this with (ported from binance.js's signature) — mapped
 // here to Bybit's own interval tokens ('D', '30').
-const INTERVAL_MAP = { '1d': 'D', '30m': '30' };
+const INTERVAL_MAP = { '1d': 'D', '4h': '240', '30m': '30' };
 
 async function fetchKlines(symbol, limit = 60, interval = '1d') {
   const bybitInterval = INTERVAL_MAP[interval];

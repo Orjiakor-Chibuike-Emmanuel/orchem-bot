@@ -31,6 +31,7 @@ function srcTag(source) {
   if (source === 'aux-range') return ' <span class="src-tag">aux range</span>';
   if (source === 'tight-prior-candle') return ' <span class="src-tag">tight</span>';
   if (source === 'swing-level') return ' <span class="src-tag">swing</span>';
+  if (source === '4h-swing-level') return ' <span class="src-tag">4h swing</span>';
   if (source === 'range-extreme') return ' <span class="src-tag">range</span>';
   return '';
 }

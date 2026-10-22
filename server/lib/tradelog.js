@@ -35,6 +35,15 @@ function logTrade(item, result2h, entryStatus = 'confirmed') {
     slLevel: item.slLevel,
     slRisk: item.slRisk,
     slSource: item.slSource || null,
+    // Forward test: 4h-chart TP candidates + how far price actually went
+    // afterwards (max favourable / adverse excursion vs the confirmation price).
+    tp4h: item.tp4h || null,
+    tp4hGain: item.tp4hGain || null,
+    tp4hMin: item.tp4hMin || null,
+    tp4hMinGain: item.tp4hMinGain || null,
+    mfePct: null,
+    maePct: null,
+    excursionTrackedUntil: null,
     sizeQty: item.sizeQty || null,
     sizeNotional: item.sizeNotional || null,
     sizeLeverage: item.sizeLeverage || null,
@@ -149,7 +158,48 @@ async function checkBybitOutcome(trade) {
   }
 }
 
+// Forward test: for 72h after confirmation, record the furthest price moved
+// in the trade's favour (MFE) and against it (MAE), as % of the confirmation
+// price, from 30m candles. Tracked for taken trades AND for signals skipped
+// by the minimum-TP rule (so "would that skipped trade have worked?" has a
+// real answer). Read-only; touches nothing on Bybit.
+const EXCURSION_WINDOW_MS = 72 * 60 * 60 * 1000;
+
+async function updateExcursions() {
+  const now = Date.now();
+  const tracked = stateMod.tradeLog.filter(t =>
+    t.confirmedAtMs && t.confirmationPrice &&
+    (t.entryStatus === 'confirmed' || (t.entryStatus === 'invalidated' && t.notes && /TP only|TP not found/.test(t.notes))) &&
+    now - t.confirmedAtMs < EXCURSION_WINDOW_MS
+  );
+  for (const t of tracked) {
+    try {
+      const candles = await fetchKlines(t.symbol, 100, '30m');
+      if (!Array.isArray(candles)) continue;
+      const since = candles.filter(c => c.time >= t.confirmedAtMs);
+      if (!since.length) continue;
+      const base = t.confirmationPrice;
+      const hi = Math.max(...since.map(c => c.high));
+      const lo = Math.min(...since.map(c => c.low));
+      const bull = t.direction === 'bull';
+      const mfe = bull ? (hi - base) / base * 100 : (base - lo) / base * 100;
+      const mae = bull ? (base - lo) / base * 100 : (hi - base) / base * 100;
+      // 100 x 30m candles only reach back ~50h, so never let a shorter
+      // lookback shrink a value already recorded.
+      t.mfePct = Math.max(t.mfePct || 0, parseFloat(mfe.toFixed(2)));
+      t.maePct = Math.max(t.maePct || 0, parseFloat(mae.toFixed(2)));
+      t.excursionTrackedUntil = now;
+      stateMod.saveTradeLog();
+    } catch (e) {
+      console.log(`[tradelog] excursion tracking error for ${t.symbol}:`, e.message);
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+}
+
 async function runAutoOutcomeChecks() {
+  await updateExcursions();
+
   // Bybit-executed trades: check often and from the start — a trailing
   // stop or SL can close a position within minutes, and there's no reason
   // to wait when the real exchange has the real answer.
@@ -191,14 +241,15 @@ function clearLog() {
 
 function exportCsv() {
   const tradeLog = stateMod.tradeLog;
-  const headers = ['Date', 'Status', 'Symbol', 'Direction', 'Signal', 'Confirmation Price', 'Entry Price (fill)', 'TP Level', 'TP %', 'TP Source', 'SL Level', 'SL %', 'SL Source', 'Size (qty)', 'Size (notional $)', 'Leverage (x)', 'Trailing %', 'Signal Age', 'Confirm Time', 'Outcome', 'Outcome Source', 'Actual Exit', 'Actual PnL ($)', 'Notes'];
+  const headers = ['Date', 'Status', 'Symbol', 'Direction', 'Signal', 'Confirmation Price', 'Entry Price (fill)', 'TP Level', 'TP %', 'TP Source', 'TP 4h', 'TP 4h %', 'TP 4h >=min', 'TP 4h >=min %', 'SL Level', 'SL %', 'SL Source', 'Size (qty)', 'Size (notional $)', 'Leverage (x)', 'Trailing %', 'Signal Age', 'Confirm Time', 'Outcome', 'Outcome Source', 'Actual Exit', 'Actual PnL ($)', 'MFE % (best move for you)', 'MAE % (worst move against)', 'Notes'];
   const rows = tradeLog.map(t => [
     t.date, t.entryStatus || 'confirmed', t.symbol, t.direction === 'bull' ? 'LONG' : 'SHORT',
-    t.signal1d, t.confirmationPrice || '', t.entryPrice || '', t.tpLevel || '', t.tpGain || '', t.tpSource || '',
+    t.signal1d, t.confirmationPrice || '', t.entryPrice || '', t.tpLevel || '', t.tpGain || '', t.tpSource || '', t.tp4h || '', t.tp4hGain || '', t.tp4hMin || '', t.tp4hMinGain || '',
     t.slLevel || '', t.slRisk || '', t.slSource || '', t.sizeQty || '', t.sizeNotional ? t.sizeNotional.toFixed(2) : '',
     t.sizeLeverage ? t.sizeLeverage.toFixed(1) : '',
     t.trailingPct || '', t.signalAge, t.confirmTime, t.outcome,
     t.outcomeSource || '', t.actualExitPrice || '', t.actualPnl != null ? t.actualPnl.toFixed(2) : '',
+    t.mfePct != null ? t.mfePct : '', t.maePct != null ? t.maePct : '',
     `"${(t.notes || '').replace(/"/g, '""')}"`
   ]);
   return [headers, ...rows].map(r => r.join(',')).join('\n');

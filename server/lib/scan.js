@@ -12,7 +12,7 @@
 const stateMod = require('./state');
 const { fetchSymbols, fetchKlines, fetch2HKlines, RateLimitError } = require('./bybitMarket');
 const {
-  analyseSymbol, analyse2H, findSwingLevels, resolveTP, auxRangeStopLevel
+  analyseSymbol, analyse2H, findSwingLevels, resolveTP, auxRangeStopLevel, fourHourTpCandidates
 } = require('./boundary');
 const {
   calcPairExhaustionThreshold, isRecentMoveExhausted,
@@ -154,7 +154,7 @@ async function startScan() {
       'tpLevel', 'tpGain', 'tpEstimated', 'tpSource',
       'slLevel', 'slRisk', 'slEstimated', 'slSource',
       'sizeQty', 'sizeNotional', 'sizeLeverage',
-      'bybitResult', 'invalidatedLogged'
+      'bybitResult', 'invalidatedLogged', 'tp4h', 'tp4hGain', 'tp4hMin', 'tp4hMinGain'
     ];
     const prevBySymbol = new Map((stateMod.state.watchlist || []).map(i => [i.symbol, i]));
 
@@ -299,15 +299,61 @@ async function run2HConfirmation() {
         const beforeConfirm = (allCandles2h || []).filter(c => c.time < result2h.confirmTime);
         confirmSl = auxRangeStopLevel(entryPrice, beforeConfirm, item.direction);
 
-        const tpValid = confirmTp && (
+        // 4h-chart levels: (1) logged for the forward test, and (2) the
+        // fallback TP when the daily chart gives none.
+        item.tp4h = item.tp4hGain = item.tp4hMin = item.tp4hMinGain = null;
+        let c4 = null;
+        try {
+          const k4 = await fetchKlines(item.symbol, 500, '4h');
+          if (k4 && k4.length > 10) {
+            c4 = fourHourTpCandidates(entryPrice, findSwingLevels(k4.slice(0, -1)), item.direction, MIN_CONFIRM_TP_PCT);
+            if (c4.nearest) { item.tp4h = c4.nearest.price; item.tp4hGain = calcRR(entryPrice, c4.nearest.price); }
+            if (c4.nearestMin) { item.tp4hMin = c4.nearestMin.price; item.tp4hMinGain = calcRR(entryPrice, c4.nearestMin.price); }
+          }
+        } catch (e) {
+          if (e instanceof RateLimitError) throw e;
+        }
+
+        let tpValid = confirmTp && (
           (item.direction === 'bull' && confirmTp.price > entryPrice) ||
           (item.direction === 'bear' && confirmTp.price < entryPrice)
         );
 
+        // No usable daily TP, or only an ESTIMATED one (range-extreme guess)
+        // -> prefer a real 4h swing level when one exists.
+        if ((!tpValid || confirmTp.estimated) && c4 && c4.nearest) {
+          confirmTp = { price: c4.nearest.price, estimated: false, source: '4h-swing-level' };
+          tpValid = true;
+        }
+
+        // Neither timeframe has a TP -> not a trade: invalidate, keep it in
+        // the log with the reason (no order, no entry alert).
+        if (!tpValid) {
+          sets.confirmed.delete(item.symbol);
+          item.alerted = false;
+          item.invalidated = true;
+          sets.invalidated.add(item.symbol);
+          stateMod.saveAlertSets(sets);
+          item.confirmationPrice = entryPrice;
+          item.entryPrice = entryPrice;
+          item.confirmedAt = result2h.confirmTime + (30 * 60 * 1000);
+          item.tpLevel = null;
+          item.tpGain = null;
+          item.invalidReason = 'TP not found in both 1D TF and 4hr TF — skipped';
+          console.log(`[confirm] ${item.symbol} invalidated: ${item.invalidReason}`);
+          if (!item.invalidatedLogged) {
+            item.invalidatedLogged = true;
+            logTrade(item, result2h, 'invalidated');
+          }
+          confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice });
+          await sleep(80);
+          continue;
+        }
+
         // TP too close to the confirmed entry -> not a trade worth taking.
         // Undo the "confirmed" marking made above and invalidate it instead:
         // no order, no entry alert, logged as INVALIDATED with the reason.
-        // (No TP found at all is a different case and is left as before.)
+        // (No TP at all is handled just above.)
         if (tpValid) {
           const tpPctAtEntry = parseFloat(calcRR(entryPrice, confirmTp.price));
           if (tpPctAtEntry < MIN_CONFIRM_TP_PCT) {
@@ -316,6 +362,11 @@ async function run2HConfirmation() {
             item.invalidated = true;
             sets.invalidated.add(item.symbol);
             stateMod.saveAlertSets(sets);
+            item.confirmationPrice = entryPrice;
+            item.entryPrice = entryPrice;
+            item.confirmedAt = result2h.confirmTime + (30 * 60 * 1000);
+            item.tpLevel = confirmTp.price;
+            item.tpGain = String(tpPctAtEntry);
             item.invalidReason = `TP only ${tpPctAtEntry}% away at confirmation (minimum ${MIN_CONFIRM_TP_PCT}%) — skipped`;
             console.log(`[confirm] ${item.symbol} invalidated: ${item.invalidReason}`);
             if (!item.invalidatedLogged) {
@@ -435,7 +486,7 @@ async function run2HConfirmation() {
 
         const tpTag = item.tpEstimated ? ' ⚠️est.' : '';
         const slTag = item.slEstimated ? ' ⚠️est.' : '';
-        const srcLabel = s => s === 'aux-range' ? ' [aux range edge]' : s === 'tight-prior-candle' ? ' [tight: prior candle]' : s === 'swing-level' ? ' [swing level]' : s === 'range-extreme' ? ' [range extreme]' : '';
+        const srcLabel = s => s === 'aux-range' ? ' [aux range edge]' : s === 'tight-prior-candle' ? ' [tight: prior candle]' : s === 'swing-level' ? ' [swing level]' : s === 'range-extreme' ? ' [range extreme]' : s === '4h-swing-level' ? ' [4h swing level]' : '';
         const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}${srcLabel(item.tpSource)}` : '\n🎯 TP: none found — size manually';
         const slText = item.slLevel ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)${slTag}${srcLabel(item.slSource)}` : '\n🛑 SL: none found — size manually';
         const levTag = item.sizeLeverage && item.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? ' ⚠️ SL too tight for this margin — consider skipping or a wider stop' : '';

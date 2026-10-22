@@ -213,6 +213,20 @@ function auxRangeStopLevel(entryPrice, candles, direction) {
   return valid ? { price: level, estimated: false, source: 'aux-range', parentTime: r.parentTime, auxCount: r.auxCount } : null;
 }
 
+/* FORWARD TEST ONLY — does not affect any trade. Targets a 4h-chart TP would
+   have picked, logged next to the daily TP so the two can be compared against
+   what price actually did afterwards. `nearest` = closest swing level beyond
+   0.5% (same rule as the daily TP); `nearestMin` = closest one at least
+   minPct% away (anything nearer is treated as noise). */
+function fourHourTpCandidates(entryPrice, levels, direction, minPct) {
+  const dirOk = (l, pct) => direction === 'bull'
+    ? l.price > entryPrice * (1 + pct / 100)
+    : l.price < entryPrice * (1 - pct / 100);
+  const sorted = levels.slice().sort((a, b) => direction === 'bull' ? a.price - b.price : b.price - a.price);
+  const pick = pct => sorted.find(l => dirOk(l, pct)) || null;
+  return { nearest: pick(0.5), nearestMin: pick(minPct) };
+}
+
 function getSignalAge(signalTimestamp) {
   if (!signalTimestamp) return null;
   const hours = (Date.now() - signalTimestamp) / (1000 * 60 * 60);
@@ -399,5 +413,5 @@ module.exports = {
   EXTREME_NEAR_PCT, EXTREME_MOVE_PCT, MIN_TP_PCT,
   classifyPattern, findBoundary, findSwingLevels, nearestLevel, isTooCloseToExtreme,
   calcMA, avgVolume, findTPLevel, calcRR, findSLLevel, rangeExtremeLevel,
-  resolveTP, resolveSL, findAuxRange, auxRangeStopLevel, getSignalAge, calcStrength, analyseSymbol, analyse2H
+  resolveTP, resolveSL, findAuxRange, auxRangeStopLevel, fourHourTpCandidates, getSignalAge, calcStrength, analyseSymbol, analyse2H
 };
