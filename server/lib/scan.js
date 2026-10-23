@@ -24,6 +24,9 @@ const { fmt, logTrade } = require('./tradelog');
 const { calcRR } = require('./boundary');
 
 const MAX_RISK_USD = parseFloat(process.env.MAX_RISK_USD || '35');
+// An exhausted move (big drop/pump just before confirmation) is no longer
+// skipped: the trade is taken at this fraction of the normal risk.
+const EXHAUSTED_RISK_FACTOR = parseFloat(process.env.EXHAUSTED_RISK_FACTOR || '0.5');
 const MARGIN_PER_TRADE_USD = parseFloat(process.env.MARGIN_PER_TRADE_USD || '150');
 const MAX_SENSIBLE_LEVERAGE = parseFloat(process.env.MAX_SENSIBLE_LEVERAGE || '50');
 // A target this close to entry isn't worth chasing: the nearer a pair is to
@@ -159,7 +162,7 @@ async function startScan() {
       'tpLevel', 'tpGain', 'tpEstimated', 'tpSource',
       'slLevel', 'slRisk', 'slEstimated', 'slSource',
       'sizeQty', 'sizeNotional', 'sizeLeverage',
-      'bybitResult', 'invalidatedLogged', 'tp4h', 'tp4hGain', 'tp4hMin', 'tp4hMinGain'
+      'bybitResult', 'invalidatedLogged', 'exhaustedEntry', 'tp4h', 'tp4hGain', 'tp4hMin', 'tp4hMinGain'
     ];
     const prevBySymbol = new Map((stateMod.state.watchlist || []).map(i => [i.symbol, i]));
 
@@ -297,16 +300,11 @@ async function run2HConfirmation() {
         continue;
       }
 
-      // Exhausted = the move already happened. Skip for good: letting it
-      // release when the 4h window slid past the drop only meant entering
-      // later, at the low (MITO, 23 Oct).
-      if (result2h && !item.alerted && isRecentMoveExhausted(allCandles2h, item.direction, item.exhaustionPct)) {
-        skipConfirmation(sets, item, result2h, 'exhausted',
-          'Exhausted — the move had already happened at confirmation — skipped');
-        confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice, exhausted: true });
-        await sleep(80);
-        continue;
-      }
+      // Exhausted = a big move already happened just before this confirmation.
+      // Not skipped any more (PTB, 23 Oct, kept running ~45% after being
+      // skipped) — the trade is taken at reduced size instead.
+      const isExhausted = !!(result2h && !item.alerted &&
+        isRecentMoveExhausted(allCandles2h, item.direction, item.exhaustionPct));
 
       if (result2h && !item.alerted) {
         item.alerted = true;
@@ -458,7 +456,9 @@ async function run2HConfirmation() {
           item.slSource = null;
         }
 
-        const sizing = calcPositionSize(entryPrice, item.slLevel, MAX_RISK_USD, MARGIN_PER_TRADE_USD);
+        item.exhaustedEntry = isExhausted;
+        const riskUsd = isExhausted ? MAX_RISK_USD * EXHAUSTED_RISK_FACTOR : MAX_RISK_USD;
+        const sizing = calcPositionSize(entryPrice, item.slLevel, riskUsd, MARGIN_PER_TRADE_USD);
         if (sizing) {
           item.sizeQty = sizing.qty;
           item.sizeNotional = sizing.notional;
@@ -548,6 +548,9 @@ async function run2HConfirmation() {
             : (bybit.AUTO_TRADE ? `\n🤖 Bybit Demo: skipped — ${escHtml(bybitResult.reason)}` : '');
         sets.tg.add(item.symbol);
         stateMod.saveAlertSets(sets);
+        const exhaustedText = item.exhaustedEntry
+          ? `\n⚠️ Exhausted move before entry — reduced size (risk $${(MAX_RISK_USD * EXHAUSTED_RISK_FACTOR).toFixed(2)} instead of $${MAX_RISK_USD})`
+          : '';
         const tgMsg = `${dirEmoji} <b>ENTRY CONFIRMED</b>\n`
           + `<b>${item.symbol.replace('USDT', '')}/USDT</b> · ${dir}\n`
           + `Signal: ${escHtml(item.signal1d)}\n`
@@ -556,7 +559,7 @@ async function run2HConfirmation() {
           + (bybitResult.placed && item.entryPrice !== item.confirmationPrice
               ? `\nEntry (actual fill): $${fmt(item.entryPrice)}`
               : '')
-          + tpText + slText + sizeText + trailingText + bybitText;
+          + tpText + slText + sizeText + exhaustedText + trailingText + bybitText;
         await sendTelegram(tgMsg);
       }
 

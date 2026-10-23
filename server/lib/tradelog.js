@@ -64,7 +64,7 @@ function logTrade(item, result2h, entryStatus = 'confirmed') {
     autoOutcome: entryStatus === 'confirmed' ? 'open' : 'n/a',
     outcome: entryStatus === 'confirmed' ? 'pending' : 'n/a',
     // For invalidated entries, why (e.g. TP too close); editable later like any note.
-    notes: item.invalidReason || ''
+    notes: item.invalidReason || (item.exhaustedEntry ? 'Entered after an exhausted move — reduced size' : '')
   };
   stateMod.tradeLog.unshift(entry);
   stateMod.saveTradeLog();
