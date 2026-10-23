@@ -30,6 +30,11 @@ const MAX_SENSIBLE_LEVERAGE = parseFloat(process.env.MAX_SENSIBLE_LEVERAGE || '5
 // its TP, the less that level means and the easier it is to get pushed
 // around or reversed (1000PEPE, 21 Oct: 0.98% TP, stopped out within 15
 // minutes). Below this, the signal is invalidated at confirmation time.
+// Confirmations whose 30m candle closes within this many hours of the daily
+// close (00:00 UTC = 01:00 Lagos) are skipped: the daily picture is about to
+// be replaced and the watchlist rebuilds at that moment. 0 disables the rule.
+const END_OF_DAY_CUTOFF_HOURS = parseFloat(process.env.END_OF_DAY_CUTOFF_HOURS || '2');
+
 const MIN_CONFIRM_TP_PCT = parseFloat(process.env.MIN_CONFIRM_TP_PCT || '3.5');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -214,6 +219,33 @@ async function startScan() {
   scanning = false;
 }
 
+// Permanently skip a confirmed breakout (no order, no entry alert). It stays
+// in the logbook with the reason, and its price excursion is tracked so the
+// rule can be judged later against what price actually did.
+function skipConfirmation(sets, item, result2h, status, reason) {
+  item.invalidated = true;
+  item.invalidReason = reason;
+  item.confirmationPrice = result2h.closePrice;
+  item.confirmedAt = result2h.confirmTime + (30 * 60 * 1000);
+  sets.invalidated.add(item.symbol);
+  sets.exhaustedLogged.add(item.symbol);
+  stateMod.saveAlertSets(sets);
+  console.log(`[confirm] ${item.symbol} skipped (${status}): ${reason}`);
+  if (!item.invalidatedLogged) {
+    item.invalidatedLogged = true;
+    logTrade(item, result2h, status);
+  }
+}
+
+// True when the confirming 30m candle closed inside the end-of-day window.
+function inEndOfDayWindow(confirmTime) {
+  if (!(END_OF_DAY_CUTOFF_HOURS > 0)) return false;
+  const DAY = 24 * 60 * 60 * 1000;
+  const closeTime = confirmTime + 30 * 60 * 1000;
+  const dailyClose = Math.floor((closeTime - 1) / DAY) * DAY + DAY; // next 00:00 UTC at/after the candle close
+  return dailyClose - closeTime < END_OF_DAY_CUTOFF_HOURS * 60 * 60 * 1000;
+}
+
 async function run2HConfirmation() {
   if (isBanned()) {
     console.log(`[confirm] skipping — Bybit rate-limit cooldown still in effect for ${bannedSecondsLeft()}s`);
@@ -257,12 +289,20 @@ async function run2HConfirmation() {
         continue;
       }
 
+      if (result2h && !item.alerted && inEndOfDayWindow(result2h.confirmTime)) {
+        skipConfirmation(sets, item, result2h, 'invalidated',
+          `Confirmed too close to the daily close (within ${END_OF_DAY_CUTOFF_HOURS}h of 01:00 Lagos) — skipped`);
+        confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice });
+        await sleep(80);
+        continue;
+      }
+
+      // Exhausted = the move already happened. Skip for good: letting it
+      // release when the 4h window slid past the drop only meant entering
+      // later, at the low (MITO, 23 Oct).
       if (result2h && !item.alerted && isRecentMoveExhausted(allCandles2h, item.direction, item.exhaustionPct)) {
-        if (!sets.exhaustedLogged.has(item.symbol)) {
-          sets.exhaustedLogged.add(item.symbol);
-          stateMod.saveAlertSets(sets);
-          logTrade(item, result2h, 'exhausted');
-        }
+        skipConfirmation(sets, item, result2h, 'exhausted',
+          'Exhausted — the move had already happened at confirmation — skipped');
         confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice, exhausted: true });
         await sleep(80);
         continue;
