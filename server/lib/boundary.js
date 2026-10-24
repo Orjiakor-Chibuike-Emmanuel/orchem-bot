@@ -159,6 +159,44 @@ function rangeExtremeLevel(closed, direction, kind) {
 // (swing-level | range-extreme | tight-prior-candle) — without this,
 // there's no way to answer "how was this SL actually calculated?" for any
 // specific past trade after the fact.
+/* CLOSE-BASED TAKE PROFIT
+   A wick is often just a stop-hunt; a close is where price actually settled,
+   so targets are taken from closes. A swing LOW (for shorts) is a candle
+   whose close is lower than the closes of the 2 candles before and the 2
+   after it; a swing HIGH (for longs) is the mirror image. A short's TP can
+   only be a swing low and a long's only a swing high. */
+function findCloseSwings(candles) {
+  const out = [];
+  for (let i = 2; i < candles.length - 2; i++) {
+    const c = candles[i].close;
+    const nb = [candles[i - 2].close, candles[i - 1].close, candles[i + 1].close, candles[i + 2].close];
+    if (nb.every(x => c > x)) out.push({ price: c, type: 'swingHigh' });
+    if (nb.every(x => c < x)) out.push({ price: c, type: 'swingLow' });
+  }
+  return out;
+}
+
+// Nearest swing close at least 0.5% beyond `price` in the trade's direction.
+function findTPLevelClose(price, swings, direction) {
+  if (direction === 'bull') {
+    return swings.filter(l => l.type === 'swingHigh' && l.price > price * 1.005)
+      .sort((a, b) => a.price - b.price)[0] || null;
+  }
+  return swings.filter(l => l.type === 'swingLow' && l.price < price * 0.995)
+    .sort((a, b) => b.price - a.price)[0] || null;
+}
+
+function resolveTPClose(price, closed, direction) {
+  const lvl = findTPLevelClose(price, findCloseSwings(closed), direction);
+  if (lvl) return { price: lvl.price, estimated: false, source: 'swing-close' };
+  if (!closed || !closed.length) return null;
+  // Fallback (an estimate): the most extreme close in the window.
+  const closes = closed.map(c => c.close);
+  const fb = direction === 'bull' ? Math.max(...closes) : Math.min(...closes);
+  const valid = direction === 'bull' ? fb > price * 1.005 : fb < price * 0.995;
+  return valid ? { price: fb, estimated: true, source: 'range-extreme-close' } : null;
+}
+
 function resolveTP(price, levels, closed, direction) {
   const lvl = findTPLevel(price, levels, direction);
   if (lvl) return { price: lvl.price, estimated: false, source: 'swing-level' };
@@ -279,7 +317,7 @@ function analyseSymbol(symbol, candles) {
       const pattern = classifyPattern(parentCandle, curr);
       if (pattern && trendOk && volOk) {
         const lvl = nearestLevel(curr.close, levels);
-        const tpRes = resolveTP(curr.close, levels, closed, pattern.direction);
+        const tpRes = resolveTPClose(curr.close, closed, pattern.direction);
         const slRes = resolveSL(curr.close, levels, closed, pattern.direction);
 
         if (tpRes) {
@@ -311,7 +349,7 @@ function analyseSymbol(symbol, candles) {
       const direction = breaksBull ? 'bull' : 'bear';
       if (trendOk && volOk) {
         const lvl = nearestLevel(curr.close, levels);
-        const tpRes = resolveTP(curr.close, levels, closed, direction);
+        const tpRes = resolveTPClose(curr.close, closed, direction);
         const slRes = resolveSL(curr.close, levels, closed, direction);
 
         if (tpRes) {
@@ -413,5 +451,5 @@ module.exports = {
   EXTREME_NEAR_PCT, EXTREME_MOVE_PCT, MIN_TP_PCT,
   classifyPattern, findBoundary, findSwingLevels, nearestLevel, isTooCloseToExtreme,
   calcMA, avgVolume, findTPLevel, calcRR, findSLLevel, rangeExtremeLevel,
-  resolveTP, resolveSL, findAuxRange, auxRangeStopLevel, fourHourTpCandidates, getSignalAge, calcStrength, analyseSymbol, analyse2H
+  resolveTP, resolveTPClose, findCloseSwings, resolveSL, findAuxRange, auxRangeStopLevel, fourHourTpCandidates, getSignalAge, calcStrength, analyseSymbol, analyse2H
 };
