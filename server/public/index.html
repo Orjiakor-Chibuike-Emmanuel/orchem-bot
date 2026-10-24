@@ -3,65 +3,83 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Orchem — Signal Panel</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#0c1016">
+<title>Orchem</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 26 26%27%3E%3Crect width=%2726%27 height=%2726%27 rx=%276%27 fill=%27%230c1016%27/%3E%3Crect x=%273%27 y=%2716%27 width=%2720%27 height=%273.2%27 rx=%271.6%27 fill=%27%23ffb547%27/%3E%3Ccircle cx=%2716%27 cy=%277.6%27 r=%273.6%27 fill=%27%23eef2f8%27/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-state="watching">
 
-<div class="header-strip">
-  <div class="header-inner">
-    <div class="brand">
-      <span class="brand-mark">ORCHEM</span>
-      <span class="brand-sub">SIGNAL PANEL v15</span>
+<header class="top">
+  <div class="top-row">
+    <a class="brand" href="/" aria-label="Orchem home">
+      <svg class="brand-mark" viewBox="0 0 26 26" aria-hidden="true">
+        <rect x="2" y="15" width="22" height="3.2" rx="1.6" fill="#ffb547"/>
+        <circle cx="16" cy="7.2" r="3.6" fill="#eef2f8"/>
+      </svg>
+      Orchem
+    </a>
+    <div class="status" role="status">
+      <span class="dot" id="led-status"></span>
+      <span id="status-text">Connecting</span>
     </div>
-    <div class="status-cluster">
-      <div class="status-led-group">
-        <span class="led" id="led-status"></span>
-        <span class="status-label" id="status-text">—</span>
-      </div>
-      <div class="readout">
-        <span class="readout-label">LAST SCAN</span>
-        <span class="readout-value" id="last-scan">—</span>
-      </div>
-      <div class="readout">
-        <span class="readout-label">NEXT SCAN</span>
-        <span class="readout-value" id="next-scan">—</span>
-      </div>
-      <a class="btn btn-confirmed" id="confirmed-link" href="/confirmed.html">CONFIRMED <span id="confirmed-badge">0</span></a>
-      <button class="btn" id="admin-btn">ADMIN</button>
-      <button class="btn" id="scan-btn" style="display:none">FORCE SCAN</button>
-    </div>
+    <button class="icon-btn" id="admin-btn" aria-label="Admin sign-in" title="Admin">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="4" y="10.5" width="16" height="10" rx="2.5"/>
+        <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>
+      </svg>
+    </button>
   </div>
-</div>
+  <nav class="tabs" aria-label="Pages">
+    <a class="tab" href="/" aria-current="page">Watchlist <span class="tab-badge" id="watch-badge">0</span></a>
+    <a class="tab" href="/confirmed.html" id="confirmed-link">Confirmed <span class="tab-badge" id="confirmed-badge">0</span></a>
+    <a class="tab" href="#logbook">Logbook</a>
+  </nav>
+</header>
 
-<div class="shell">
+<main class="shell">
 
-  <div class="section">
-    <div class="nameplate">
-      <span class="nameplate-title">Watchlist</span>
-      <span class="nameplate-count" id="watchlist-count">0 channels</span>
+  <section class="hero" aria-live="polite">
+    <h1 class="hero-title" id="hero-title">Connecting to the bot…</h1>
+    <p class="hero-sub" id="hero-sub"></p>
+    <div class="hero-meta">
+      <span>Last scan <b id="last-scan">—</b></span>
+      <span>Next scan in <b id="next-scan">—</b></span>
+      <button class="btn btn-quiet" id="scan-btn" hidden>Scan now</button>
     </div>
-    <div id="channels"></div>
-  </div>
+    <div class="break-line" aria-hidden="true"><i></i></div>
+  </section>
 
-  <div class="section">
-    <div class="nameplate">
-      <span class="nameplate-title">Logbook</span>
-      <span class="nameplate-count" id="log-count">0 entries</span>
+  <section class="section" id="watchlist" style="margin-top:8px">
+    <div class="section-head">
+      <h2 class="section-title">Waiting for confirmation</h2>
+      <span class="section-count" id="watchlist-count">0 pairs</span>
     </div>
-    <div class="stats-row" id="stats-row"></div>
-    <div class="logbook" id="log-rows"></div>
-  </div>
+    <div class="tiles" id="channels"></div>
+    <details class="dropped" id="dropped" hidden>
+      <summary id="dropped-summary">Dropped</summary>
+      <div class="dropped-list" id="dropped-list"></div>
+    </details>
+  </section>
 
-</div>
+  <section class="section" id="logbook">
+    <div class="section-head">
+      <h2 class="section-title">Logbook</h2>
+      <span class="section-count" id="log-count">0 entries</span>
+    </div>
+    <div class="stats" id="stats-row"></div>
+    <div id="log-rows"></div>
+  </section>
+
+</main>
 
 <footer class="foot">
-  <span>Scans for boundary-candle breakouts, confirms on 30min candles, sized to $35 max risk per trade.</span>
-  <a href="/api/trade-log/export">export logbook (csv)</a>
+  <span>Scans daily candles for breakouts, confirms on 30-minute closes, risks $35 per trade.</span>
+  <a href="/api/trade-log/export">Export logbook (CSV)</a>
 </footer>
 
+<script src="ui.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

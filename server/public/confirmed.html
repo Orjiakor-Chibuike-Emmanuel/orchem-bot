@@ -3,39 +3,55 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Orchem — Confirmed Signals</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#0c1016">
+<title>Orchem · Confirmed</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 26 26%27%3E%3Crect width=%2726%27 height=%2726%27 rx=%276%27 fill=%27%230c1016%27/%3E%3Crect x=%273%27 y=%2716%27 width=%2720%27 height=%273.2%27 rx=%271.6%27 fill=%27%23ffb547%27/%3E%3Ccircle cx=%2716%27 cy=%277.6%27 r=%273.6%27 fill=%27%23eef2f8%27/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-state="watching">
 
-<div class="header-strip">
-  <div class="header-inner">
-    <div class="brand">
-      <a class="brand-mark" href="/" style="text-decoration:none">ORCHEM</a>
-      <span class="brand-sub">CONFIRMED SIGNALS</span>
-    </div>
-    <div class="status-cluster">
-      <a class="btn" href="/">← SIGNAL PANEL</a>
+<header class="top">
+  <div class="top-row">
+    <a class="brand" href="/" aria-label="Orchem home">
+      <svg class="brand-mark" viewBox="0 0 26 26" aria-hidden="true">
+        <rect x="2" y="15" width="22" height="3.2" rx="1.6" fill="#ffb547"/>
+        <circle cx="16" cy="7.2" r="3.6" fill="#eef2f8"/>
+      </svg>
+      Orchem
+    </a>
+    <div class="status" role="status">
+      <span class="dot" id="led-status"></span>
+      <span id="status-text">Connecting</span>
     </div>
   </div>
-</div>
+  <nav class="tabs" aria-label="Pages">
+    <a class="tab" href="/">Watchlist</a>
+    <a class="tab" href="/confirmed.html" id="confirmed-link" aria-current="page">Confirmed <span class="tab-badge" id="confirmed-badge">0</span></a>
+    <a class="tab" href="/#logbook">Logbook</a>
+  </nav>
+</header>
 
-<div class="shell">
-  <div class="section">
-    <div class="nameplate nameplate-confirmed">
-      <span class="nameplate-title">Confirmed, this session</span>
-      <span class="nameplate-count" id="confirmed-count">0</span>
-    </div>
-    <div id="confirmed-list"></div>
-  </div>
-</div>
+<main class="shell">
+
+  <section class="hero" aria-live="polite">
+    <h1 class="hero-title" id="hero-title">Loading…</h1>
+    <p class="hero-sub" id="hero-sub"></p>
+    <div class="break-line" aria-hidden="true"><i></i></div>
+  </section>
+
+  <section class="section" style="margin-top:8px">
+    <div class="tickets" id="confirmed-list"></div>
+  </section>
+
+</main>
 
 <footer class="foot">
-  <span>Every confirmed entry since the watchlist last reset at UTC midnight — the exact candle, entry, TP/SL, size, and what Bybit did with it.</span>
+  <span>Every entry confirmed since the watchlist last reset at 01:00 Lagos time: the candle, entry, TP and SL, size, and what Bybit did with it.</span>
+  <a href="/">Back to the watchlist</a>
 </footer>
 
+<script src="ui.js"></script>
 <script src="confirmed.js"></script>
 </body>
 </html>
