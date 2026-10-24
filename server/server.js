@@ -15,6 +15,7 @@ const { startScan, run2HConfirmation } = require('./lib/scan');
 const { runAutoOutcomeChecks } = require('./lib/tradelog');
 const tradelog = require('./lib/tradelog');
 const { flushTgQueue } = require('./lib/telegram');
+const recover = require('./lib/recover');
 
 const app = express();
 app.use(cors());
@@ -127,8 +128,8 @@ app.get('/api/state', (req, res) => {
     nextScanIn: msUntilNextBoundary(SCAN_OFFSET_MS),
     engulfResults: stateMod.state.engulfResults || [],
     auxResults: stateMod.state.auxResults || [],
-    watchlist: stateMod.state.watchlist || [],
-    confirmResults: stateMod.state.confirmResults || [],
+    watchlist: recover.mergeAdopted(stateMod.state.watchlist || []),
+    confirmResults: recover.mergeAdopted(stateMod.state.confirmResults || []),
     tradeLog: (stateMod.tradeLog || []).slice(0, 100)
   });
 });
@@ -235,7 +236,11 @@ app.listen(PORT, () => {
   // toggle from the browser version. There's no concept of "off" here:
   // an always-on bot that isn't scanning defeats the point of moving it
   // to a server.
-  startScan().catch(e => console.log('[scan] boot scan error:', e.message));
+  // Put back any trade still open on Bybit that a redeploy made us forget,
+  // before the first scan so the scan sees those pairs as already taken.
+  recover.recoverOpenPositions()
+    .catch(e => console.log('[recover] boot error:', e.message))
+    .finally(() => startScan().catch(e => console.log('[scan] boot scan error:', e.message)));
   onEveryCandleClose([SCAN_OFFSET_MS], () => {
     startScan().catch(e => console.log('[scan] scheduled scan error:', e.message));
   });
@@ -255,6 +260,7 @@ app.listen(PORT, () => {
   // to find out. The candle-replay fallback still only runs after its
   // original 2h grace period either way.
   setInterval(() => {
+    recover.recoverOpenPositions().catch(e => console.log('[recover] error:', e.message));
     runAutoOutcomeChecks().catch(e => console.log('[tradelog] outcome check error:', e.message));
   }, 10 * 60 * 1000);
 

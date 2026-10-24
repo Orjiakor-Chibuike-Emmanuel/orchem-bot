@@ -154,7 +154,8 @@ async function listOpenPositions() {
         stopLoss: level(p.stopLoss),
         takeProfit: level(p.takeProfit),
         trailingStop: level(p.trailingStop),
-        activePrice: level(p.activePrice)
+        activePrice: level(p.activePrice),
+        createdTime: num(p.createdTime)
       });
     }
     if (!result || !result.nextPageCursor) break;
