@@ -294,10 +294,18 @@ function renderLog(tradeLog) {
 /* ── POLL ── */
 async function poll() {
   try {
-    const res = await fetch('/api/state');
+    const [res, positions] = await Promise.all([fetch('/api/state'), fetchPositions()]);
     const data = await res.json();
     const list = pickList(data);
     const tradeLog = data.tradeLog || [];
+
+    const sum = openPnlSummary(positions);
+    document.getElementById('open-pnl-wrap').hidden = !sum;
+    if (sum) {
+      const v = document.getElementById('open-pnl');
+      v.textContent = money(sum.total);
+      v.style.color = sum.total >= 0 ? 'var(--long)' : 'var(--short)';
+    }
 
     const { state, confirmedCount } = renderChrome(data, list);
     const waitingCount = renderWatchlist(list, tradeLog);

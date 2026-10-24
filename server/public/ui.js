@@ -86,3 +86,33 @@ function renderChrome(data, list) {
 function pickList(data) {
   return data.confirmResults && data.confirmResults.length ? data.confirmResults : data.watchlist || [];
 }
+
+/* ── LIVE POSITIONS ──
+   /api/positions is cached on the server (30s), so asking every poll is free.
+   Returns null when it can't be read; pages then just leave live P&L out. */
+async function fetchPositions() {
+  try {
+    const res = await fetch('/api/positions');
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (_) { return null; }
+}
+
+function money(n, digits = 2) {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return `${n >= 0 ? '+' : '−'}$${Math.abs(n).toFixed(digits)}`;
+}
+
+// Price move in the trade's favour, as a signed percent (a short profits when price falls).
+function movePct(direction, entry, price) {
+  if (!entry || !price) return null;
+  const raw = (price - entry) / entry * 100;
+  return direction === 'bear' ? -raw : raw;
+}
+
+function openPnlSummary(positionsData) {
+  if (!positionsData || !positionsData.available || !positionsData.loaded) return null;
+  const list = positionsData.positions || [];
+  if (!list.length) return null;
+  return { total: list.reduce((s, p) => s + (p.unrealisedPnl || 0), 0), count: list.length };
+}

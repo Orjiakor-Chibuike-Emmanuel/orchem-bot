@@ -133,6 +133,48 @@ app.get('/api/state', (req, res) => {
   });
 });
 
+// Live open positions for the P&L view. Public on purpose (the dashboard is
+// shared). One Bybit request serves everyone: results are cached for 30s and
+// concurrent callers share a single in-flight request, so viewers can never
+// add load on the exchange.
+const POSITIONS_TTL_MS = 30000;
+const bybitLib = require('./lib/bybit');
+const positionsCache = { at: 0, positions: null, error: false, inflight: null };
+
+async function getPositionsCached() {
+  if (!bybitLib.AUTO_TRADE) return { available: false, positions: [] };
+  const fresh = positionsCache.at && Date.now() - positionsCache.at < POSITIONS_TTL_MS;
+  if (!fresh) {
+    if (!positionsCache.inflight) {
+      positionsCache.inflight = bybitLib.listOpenPositions()
+        .then(list => { positionsCache.positions = list; positionsCache.error = false; })
+        .catch(e => {
+          positionsCache.error = true;
+          console.log('[positions] Bybit error:', e.message);
+        })
+        .finally(() => { positionsCache.at = Date.now(); positionsCache.inflight = null; });
+    }
+    await positionsCache.inflight;
+  }
+  return {
+    available: true,
+    positions: positionsCache.positions || [],
+    stale: positionsCache.error,
+    // null until the first successful read, so the page can say "unavailable"
+    // instead of showing an empty list as if nothing were open.
+    loaded: positionsCache.positions !== null,
+    updatedAt: positionsCache.at
+  };
+}
+
+app.get('/api/positions', async (req, res) => {
+  try {
+    res.json(await getPositionsCached());
+  } catch (e) {
+    res.json({ available: true, positions: [], stale: true, loaded: false });
+  }
+});
+
 app.get('/api/trade-log', (req, res) => {
   res.json(stateMod.tradeLog || []);
 });

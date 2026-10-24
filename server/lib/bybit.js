@@ -129,6 +129,40 @@ async function getClosedPnl(symbol, startTimeMs) {
   return (result && result.list) || [];
 }
 
+// Every open linear position in ONE request, for the live P&L view. Numbers
+// come back as strings from Bybit; "" or "0" on stopLoss/takeProfit/trailing
+// fields means "not set".
+async function listOpenPositions() {
+  const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  const level = v => { const n = num(v); return n && n > 0 ? n : null; };
+  const out = [];
+  let cursor = '';
+  for (let page = 0; page < 5; page++) {
+    const params = { category: 'linear', settleCoin: 'USDT', limit: '200' };
+    if (cursor) params.cursor = cursor;
+    const result = await bybitRequest('GET', '/v5/position/list', params);
+    for (const p of (result && result.list) || []) {
+      if (!(parseFloat(p.size) > 0)) continue;
+      out.push({
+        symbol: p.symbol,
+        direction: p.side === 'Sell' ? 'bear' : 'bull',
+        size: num(p.size),
+        avgPrice: num(p.avgPrice),
+        markPrice: num(p.markPrice),
+        unrealisedPnl: num(p.unrealisedPnl),
+        leverage: num(p.leverage),
+        stopLoss: level(p.stopLoss),
+        takeProfit: level(p.takeProfit),
+        trailingStop: level(p.trailingStop),
+        activePrice: level(p.activePrice)
+      });
+    }
+    if (!result || !result.nextPageCursor) break;
+    cursor = result.nextPageCursor;
+  }
+  return out;
+}
+
 function roundToStep(value, step) {
   if (!step) return value;
   const decimals = (step.toString().split('.')[1] || '').length;
@@ -307,4 +341,4 @@ async function placeOrder({ symbol, direction, qty, entryPrice, tpLevel, slLevel
   return { placed: true, orderId: result.orderId, symbol, side, qty: roundedQty, entry: realEntry, tp: finalTp, sl: finalSl, trailing: trailingSet, trailingActivePrice };
 }
 
-module.exports = { AUTO_TRADE, placeOrder, getInstrumentInfo, bybitRequest, getOpenPosition, getClosedPnl };
+module.exports = { AUTO_TRADE, placeOrder, getInstrumentInfo, bybitRequest, getOpenPosition, getClosedPnl, listOpenPositions };

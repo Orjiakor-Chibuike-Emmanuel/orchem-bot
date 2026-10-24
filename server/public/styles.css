@@ -249,6 +249,13 @@ body[data-state="banned"]    { --line-color: var(--short); }
 body[data-state="scanning"]  { --line-color: var(--info); }
 body[data-state="offline"]   { --line-color: var(--dim); }
 
+/* open P&L under the hero */
+.hero-pnl { margin-top: 22px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; }
+.hero-pnl-value { font-size: 2.4rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+.hero-pnl-value.pos, .live.pos .live-pnl { color: var(--long); }
+.hero-pnl-value.neg, .live.neg .live-pnl { color: var(--short); }
+.hero-pnl-sub { font-size: 0.88rem; color: var(--muted); }
+
 /* ── BUTTONS ── */
 .btn {
   display: inline-flex;
@@ -582,6 +589,21 @@ body[data-state="offline"]   { --line-color: var(--dim); }
   margin-top: 18px;
 }
 
+/* live result of one trade */
+.live {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--raised);
+}
+.live-label { font-size: 0.82rem; font-weight: 650; color: var(--muted); }
+.live-pnl { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+.live-meta { flex-basis: 100%; font-size: 0.82rem; color: var(--muted); }
+
 /* the ladder: higher price is higher on the page, always */
 .ladder { position: relative; margin-left: 4px; }
 .ladder-seg {
@@ -606,6 +628,7 @@ body[data-state="offline"]   { --line-color: var(--dim); }
 .ladder-mark.tp    { border-color: var(--long); }
 .ladder-mark.sl    { border-color: var(--short); }
 .ladder-mark.entry { border-color: var(--flare); background: var(--flare); }
+.ladder-mark.now   { border-color: var(--surface); background: var(--text); box-shadow: 0 0 0 2px var(--text); }
 .ladder-label {
   position: absolute;
   left: 30px;
