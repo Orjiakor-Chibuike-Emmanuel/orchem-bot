@@ -17,6 +17,9 @@ function sourceWords(source, estimated) {
     'aux-range': 'edge of the 30m auxiliary range',
     'tight-prior-candle': 'prior 30m candle',
     'swing-level': 'daily swing level',
+    'swing-close': 'daily swing close',
+    '4h-swing-close': '4h swing close',
+    'range-extreme-close': 'range extreme (close)',
     '4h-swing-level': '4h swing level',
     'range-extreme': 'range extreme'
   }[source] || '';

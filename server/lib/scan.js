@@ -12,7 +12,7 @@
 const stateMod = require('./state');
 const { fetchSymbols, fetchKlines, fetch2HKlines, RateLimitError } = require('./bybitMarket');
 const {
-  analyseSymbol, analyse2H, findSwingLevels, resolveTP, auxRangeStopLevel, fourHourTpCandidates
+  analyseSymbol, analyse2H, findSwingLevels, resolveTP, resolveTPClose, findCloseSwings, auxRangeStopLevel, fourHourTpCandidates
 } = require('./boundary');
 const {
   calcPairExhaustionThreshold, isRecentMoveExhausted,
@@ -162,7 +162,7 @@ async function startScan() {
       'tpLevel', 'tpGain', 'tpEstimated', 'tpSource',
       'slLevel', 'slRisk', 'slEstimated', 'slSource',
       'sizeQty', 'sizeNotional', 'sizeLeverage',
-      'bybitResult', 'invalidatedLogged', 'exhaustedEntry', 'tp4h', 'tp4hGain', 'tp4hMin', 'tp4hMinGain'
+      'bybitResult', 'invalidatedLogged', 'exhaustedEntry', 'tp4h', 'tp4hGain', 'tp4hMin', 'tp4hMinGain', 'tpWick', 'tpWickGain'
     ];
     const prevBySymbol = new Map((stateMod.state.watchlist || []).map(i => [i.symbol, i]));
 
@@ -320,8 +320,11 @@ async function run2HConfirmation() {
           const freshKlines = await fetchKlines(item.symbol, 60, '1d');
           if (freshKlines && freshKlines.length > 5) {
             const freshClosed = freshKlines.slice(0, -1);
-            const freshLevels = findSwingLevels(freshClosed);
-            confirmTp = resolveTP(entryPrice, freshLevels, freshClosed, item.direction);
+            confirmTp = resolveTPClose(entryPrice, freshClosed, item.direction);
+            // The old wick-based TP: recorded for comparison only, never traded.
+            const wick = resolveTP(entryPrice, findSwingLevels(freshClosed), freshClosed, item.direction);
+            item.tpWick = wick ? wick.price : null;
+            item.tpWickGain = wick ? calcRR(entryPrice, wick.price) : null;
           }
         } catch (e) {
           if (e instanceof RateLimitError) throw e;
@@ -344,7 +347,9 @@ async function run2HConfirmation() {
         try {
           const k4 = await fetchKlines(item.symbol, 500, '4h');
           if (k4 && k4.length > 10) {
-            c4 = fourHourTpCandidates(entryPrice, findSwingLevels(k4.slice(0, -1)), item.direction, MIN_CONFIRM_TP_PCT);
+            const swings4 = findCloseSwings(k4.slice(0, -1))
+              .filter(l => l.type === (item.direction === 'bull' ? 'swingHigh' : 'swingLow'));
+            c4 = fourHourTpCandidates(entryPrice, swings4, item.direction, MIN_CONFIRM_TP_PCT);
             if (c4.nearest) { item.tp4h = c4.nearest.price; item.tp4hGain = calcRR(entryPrice, c4.nearest.price); }
             if (c4.nearestMin) { item.tp4hMin = c4.nearestMin.price; item.tp4hMinGain = calcRR(entryPrice, c4.nearestMin.price); }
           }
@@ -360,7 +365,7 @@ async function run2HConfirmation() {
         // No usable daily TP, or only an ESTIMATED one (range-extreme guess)
         // -> prefer a real 4h swing level when one exists.
         if ((!tpValid || confirmTp.estimated) && c4 && c4.nearest) {
-          confirmTp = { price: c4.nearest.price, estimated: false, source: '4h-swing-level' };
+          confirmTp = { price: c4.nearest.price, estimated: false, source: '4h-swing-close' };
           tpValid = true;
         }
 
@@ -526,7 +531,7 @@ async function run2HConfirmation() {
 
         const tpTag = item.tpEstimated ? ' ⚠️est.' : '';
         const slTag = item.slEstimated ? ' ⚠️est.' : '';
-        const srcLabel = s => s === 'aux-range' ? ' [aux range edge]' : s === 'tight-prior-candle' ? ' [tight: prior candle]' : s === 'swing-level' ? ' [swing level]' : s === 'range-extreme' ? ' [range extreme]' : s === '4h-swing-level' ? ' [4h swing level]' : '';
+        const srcLabel = s => s === 'aux-range' ? ' [aux range edge]' : s === 'tight-prior-candle' ? ' [tight: prior candle]' : s === 'swing-level' ? ' [swing level]' : s === 'range-extreme' ? ' [range extreme]' : s === '4h-swing-close' ? ' [4h swing close]' : s === 'swing-close' ? ' [daily swing close]' : s === 'range-extreme-close' ? ' [range extreme, close]' : '';
         const tpText = item.tpLevel ? `\n🎯 TP: $${fmt(item.tpLevel)} (+${item.tpGain}%)${tpTag}${srcLabel(item.tpSource)}` : '\n🎯 TP: none found — size manually';
         const slText = item.slLevel ? `\n🛑 SL: $${fmt(item.slLevel)} (-${item.slRisk}%)${slTag}${srcLabel(item.slSource)}` : '\n🛑 SL: none found — size manually';
         const levTag = item.sizeLeverage && item.sizeLeverage > MAX_SENSIBLE_LEVERAGE ? ' ⚠️ SL too tight for this margin — consider skipping or a wider stop' : '';
