@@ -176,6 +176,18 @@ app.get('/api/positions', async (req, res) => {
   }
 });
 
+// What the last scan actually did: how many pairs it analysed, which ones
+// returned no data, whether it finished or was stopped early.
+app.get('/api/scan-report', (req, res) => {
+  res.json({
+    lastScanReport: stateMod.state.lastScanReport || null,
+    skippedScansDuringCooldown: stateMod.state.skippedScans || 0,
+    lastSkippedScanAt: stateMod.state.lastSkippedScanAt || null,
+    status: stateMod.state.status,
+    bannedUntil: stateMod.state.bannedUntil || null
+  });
+});
+
 app.get('/api/trade-log', (req, res) => {
   res.json(stateMod.tradeLog || []);
 });

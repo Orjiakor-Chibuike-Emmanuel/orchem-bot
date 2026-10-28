@@ -76,6 +76,8 @@ async function startScan() {
   }
   if (isBanned()) {
     console.log(`[scan] skipping — Bybit rate-limit cooldown still in effect for ${bannedSecondsLeft()}s`);
+    stateMod.state.skippedScans = (stateMod.state.skippedScans || 0) + 1;
+    stateMod.state.lastSkippedScanAt = Date.now();
     return;
   }
   scanning = true;
@@ -87,6 +89,20 @@ async function startScan() {
 
   let engulfResults = [];
   let auxResults = [];
+  // Diagnostics only: which pairs were actually analysed on this scan, and
+  // which silently weren't (a failed data request just skips the pair).
+  const scanStartedAt = Date.now();
+  const failedPairs = [];
+  let checkedPairs = 0;
+  const writeReport = (outcome, extra = {}) => {
+    stateMod.state.lastScanReport = {
+      at: Date.now(), startedAt: scanStartedAt, durationSec: Math.round((Date.now() - scanStartedAt) / 1000),
+      outcome, listed: checkedPairs + failedPairs.length, analysed: checkedPairs,
+      failed: failedPairs.slice(0, 50), failedCount: failedPairs.length, ...extra
+    };
+    console.log(`[scan] report: ${outcome}, analysed ${checkedPairs} of ${checkedPairs + failedPairs.length} pairs in ${stateMod.state.lastScanReport.durationSec}s` +
+      (failedPairs.length ? `, NO DATA for ${failedPairs.length}: ${failedPairs.slice(0, 15).join(', ')}${failedPairs.length > 15 ? ', …' : ''}` : ''));
+  };
 
   try {
     const symbols = await fetchSymbols();
@@ -104,11 +120,14 @@ async function startScan() {
       await Promise.all(batch.map(async sym => {
         try {
           const klines = await fetchKlines(sym, 60, '1d');
+          if (!klines) { failedPairs.push(sym); return; }
           const { engulf, aux } = analyseSymbol(sym, klines);
+          checkedPairs++;
           if (engulf) engulfResults.push(engulf);
           if (aux) auxResults.push(aux);
         } catch (e) {
           if (e instanceof RateLimitError) throw e;
+          failedPairs.push(sym);
         }
       }));
       await sleep(BATCH_DELAY_MS);
@@ -205,6 +224,8 @@ async function startScan() {
     stateMod.save();
 
     console.log(`[scan] done — ${engulfResults.length} engulfing, ${auxResults.length} aux, ${newWatchlist.length} on watchlist`);
+    writeReport('completed', { signals: allSignals.length, watchlist: newWatchlist.map(i => i.symbol) });
+    stateMod.save();
 
     if (newWatchlist.length) {
       await run2HConfirmation();
@@ -212,8 +233,10 @@ async function startScan() {
   } catch (e) {
     if (e instanceof RateLimitError) {
       registerBan(e.retryAfterSec);
+      writeReport('stopped by Bybit rate limit — watchlist NOT updated');
     } else {
       console.log('[scan] error:', e.message);
+      writeReport(`stopped by an error (${e.message}) — watchlist NOT updated`);
     }
   }
 
@@ -307,6 +330,10 @@ async function run2HConfirmation() {
         isRecentMoveExhausted(allCandles2h, item.direction, item.exhaustionPct));
 
       if (result2h && !item.alerted) {
+        const lateMin = Math.round((Date.now() - (result2h.confirmTime + 30 * 60 * 1000)) / 60000);
+        if (lateMin > 45) {
+          console.log(`[confirm] LATE: ${item.symbol} first seen as confirmed ${lateMin} min after its confirming candle closed (pair first on watchlist at ${new Date(item.detectedAt || Date.now()).toISOString()})`);
+        }
         item.alerted = true;
         sets.confirmed.add(item.symbol);
         stateMod.saveAlertSets(sets);
