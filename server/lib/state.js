@@ -18,6 +18,7 @@
 ═══════════════════════════════════════ */
 const fs = require('fs');
 const path = require('path');
+const persist = require('./persist');
 
 // DATA_DIR can be pointed at a mounted Render Disk later for durable
 // storage across restarts — see README.md. Defaults to the local data/
@@ -45,6 +46,7 @@ function readJsonSafe(file, fallback) {
 function writeJsonSafe(file, data) {
   try {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
+    persist.schedule(file);
   } catch (e) {
     console.log(`[state] failed to write ${file}:`, e.message);
   }
