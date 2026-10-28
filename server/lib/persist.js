@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════
    DURABLE STORAGE (no paid disk)
    Render's free tier wipes local files on every deploy. This keeps copies of
-   trade-log.json and state.json on a dedicated branch of the bot's own GitHub
+   trade-log.json and state.json in a PRIVATE data repo on GitHub (or a branch of the bot's own
    repo (default "bot-data" — Render only deploys main, so saving there never
    triggers a redeploy) and pulls them back at startup.
 
@@ -36,7 +36,7 @@ const lastPushAt = {};
 const inflight = new Set();
 let branchReady = false;
 
-function remotePath(f) { return `data/${f}`; }
+function remotePath(f) { return f; } // files sit at the root of the data repo
 
 async function gh(method, url, body) {
   const res = await fetch(API + url, {

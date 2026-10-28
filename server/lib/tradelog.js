@@ -244,6 +244,12 @@ function clearLog() {
 function exportCsv() {
   const tradeLog = stateMod.tradeLog;
   const headers = ['Date', 'Status', 'Symbol', 'Direction', 'Signal', 'Confirmation Price', 'Entry Price (fill)', 'TP Level', 'TP %', 'TP Source', 'TP 4h', 'TP 4h %', 'TP 4h >=min', 'TP 4h >=min %', 'TP old wick method', 'TP old wick %', 'SL Level', 'SL %', 'SL Source', 'Size (qty)', 'Size (notional $)', 'Leverage (x)', 'Trailing %', 'Signal Age', 'Confirm Time', 'Outcome', 'Outcome Source', 'Actual Exit', 'Actual PnL ($)', 'MFE % (best move for you)', 'MAE % (worst move against)', 'Notes'];
+  // Any field containing a comma (e.g. the confirm time "28 Oct, 12:00") must
+  // be quoted, or it splits into two columns and shifts everything after it.
+  const q = v => {
+    const x = v == null ? '' : String(v);
+    return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x;
+  };
   const rows = tradeLog.map(t => [
     t.date, t.entryStatus || 'confirmed', t.symbol, t.direction === 'bull' ? 'LONG' : 'SHORT',
     t.signal1d, t.confirmationPrice || '', t.entryPrice || '', t.tpLevel || '', t.tpGain || '', t.tpSource || '', t.tp4h || '', t.tp4hGain || '', t.tp4hMin || '', t.tp4hMinGain || '', t.tpWick || '', t.tpWickGain || '',
@@ -252,9 +258,9 @@ function exportCsv() {
     t.trailingPct || '', t.signalAge, t.confirmTime, t.outcome,
     t.outcomeSource || '', t.actualExitPrice || '', t.actualPnl != null ? t.actualPnl.toFixed(2) : '',
     t.mfePct != null ? t.mfePct : '', t.maePct != null ? t.maePct : '',
-    `"${(t.notes || '').replace(/"/g, '""')}"`
+    t.notes || ''
   ]);
-  return [headers, ...rows].map(r => r.join(',')).join('\n');
+  return [headers, ...rows].map(r => r.map(q).join(',')).join('\n');
 }
 
 module.exports = {
