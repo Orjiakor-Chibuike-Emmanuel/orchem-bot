@@ -58,6 +58,24 @@ function buildItem(p) {
   };
 }
 
+// The trade log row survived (only the dashboard list was reset by the daily
+// rollover), so rebuild the item from it: the real signal text, sources and
+// confirmation time are all still there. Live levels come from Bybit.
+function buildItemFromRow(row, p) {
+  const item = buildItem(p);
+  item.recovered = false;
+  item.signal1d = row.signal1d && row.signal1d !== '—' ? row.signal1d : item.signal1d;
+  item.confirmedAt = row.confirmedAtMs || item.confirmedAt;
+  if (row.confirmationPrice) item.confirmationPrice = row.confirmationPrice;
+  if (row.entryPrice) item.entryPrice = row.entryPrice;
+  for (const f of ['tpLevel', 'tpGain', 'tpSource', 'slLevel', 'slRisk', 'slSource', 'trailingPct', 'sizeLeverage']) {
+    if (row[f] != null) item[f] = row[f];
+  }
+  item.exhaustedEntry = !!(row.notes && /exhausted/i.test(row.notes));
+  item.bybitResult.orderId = row.bybitOrderId || null;
+  return item;
+}
+
 // Pure-ish core, exported for testing: takes the open positions, updates
 // state + trade log, returns how many were adopted / dropped.
 function reconcile(positions, now = Date.now()) {
@@ -76,14 +94,28 @@ function reconcile(positions, now = Date.now()) {
     if (p.createdTime && now - p.createdTime < SETTLE_MS) continue;
     if (adopted.some(a => a.symbol === p.symbol && a.direction === p.direction)) continue;
 
-    const known = (stateMod.tradeLog || []).some(t =>
-      t.symbol === p.symbol && t.bybitPlaced && (!t.autoOutcome || t.autoOutcome === 'open'));
-    if (known) continue;
+    const row = (stateMod.tradeLog || []).find(t =>
+      t.symbol === p.symbol && t.direction === p.direction && t.bybitPlaced && (!t.autoOutcome || t.autoOutcome === 'open'));
+    if (row) {
+      // Already in the logbook: just put it back on the Confirmed page.
+      const it = buildItemFromRow(row, p);
+      it.restored = true;
+      adopted.push(it);
+      try {
+        const sets = stateMod.alertSets();
+        sets.confirmed.add(p.symbol);
+        stateMod.saveAlertSets(sets);
+      } catch (_) {}
+      added++;
+      console.log(`[recover] restored ${p.symbol} ${p.direction} to the Confirmed page (still open on Bybit)`);
+      continue;
+    }
 
     const item = buildItem(p);
-    const row = tradelog.logTrade(item, null, 'confirmed');
-    row.notes = 'Stop loss and take profit shown are the ones on Bybit now.';
-    row.recovered = true;
+    item.restored = true;
+    const newRow = tradelog.logTrade(item, null, 'confirmed');
+    newRow.notes = 'Stop loss and take profit shown are the ones on Bybit now.';
+    newRow.recovered = true;
     stateMod.saveTradeLog();
     adopted.push(item);
 
@@ -125,7 +157,7 @@ function mergeAdopted(list) {
   if (!adopted.length) return list;
   const have = new Set(adopted.map(a => `${a.symbol}:${a.direction}`));
   const kept = (list || []).filter(i =>
-    !have.has(`${i.symbol}:${i.direction}`) || (i.confirmed && !i.recovered));
+    !have.has(`${i.symbol}:${i.direction}`) || (i.confirmed && !i.restored));
   const keptKeys = new Set(kept.filter(i => i.confirmed).map(i => `${i.symbol}:${i.direction}`));
   return kept.concat(adopted.filter(a => !keptKeys.has(`${a.symbol}:${a.direction}`)));
 }
