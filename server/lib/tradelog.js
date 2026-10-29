@@ -171,7 +171,7 @@ async function updateExcursions() {
   const now = Date.now();
   const tracked = stateMod.tradeLog.filter(t =>
     t.confirmedAtMs && t.confirmationPrice &&
-    (t.entryStatus === 'confirmed' || t.entryStatus === 'exhausted' || (t.entryStatus === 'invalidated' && t.notes && /TP only|TP not found|daily close/.test(t.notes))) &&
+    (t.entryStatus === 'confirmed' || t.entryStatus === 'exhausted' || (t.entryStatus === 'invalidated' && t.notes && /TP only|TP not found|daily close|already moved/.test(t.notes))) &&
     now - t.confirmedAtMs < EXCURSION_WINDOW_MS
   );
   for (const t of tracked) {

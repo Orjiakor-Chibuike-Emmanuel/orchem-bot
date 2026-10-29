@@ -36,6 +36,11 @@ const MAX_SENSIBLE_LEVERAGE = parseFloat(process.env.MAX_SENSIBLE_LEVERAGE || '5
 // Confirmations whose 30m candle closes within this many hours of the daily
 // close (00:00 UTC = 01:00 Lagos) are skipped: the daily picture is about to
 // be replaced and the watchlist rebuilds at that moment. 0 disables the rule.
+// Skip a confirmation if price has ALREADY moved this far (%) in the trade's
+// direction since the confirming candle closed — the entry would be chasing a
+// move that has already happened (DGAI, 28 Oct: confirmed 11:00, noticed 20:00,
+// price already 1.5% on). 0 turns it off.
+const MAX_MOVE_SINCE_CONFIRM_PCT = parseFloat(process.env.MAX_MOVE_SINCE_CONFIRM_PCT || '2');
 const END_OF_DAY_CUTOFF_HOURS = parseFloat(process.env.END_OF_DAY_CUTOFF_HOURS || '2');
 
 const MIN_CONFIRM_TP_PCT = parseFloat(process.env.MIN_CONFIRM_TP_PCT || '3.5');
@@ -263,6 +268,15 @@ function skipConfirmation(sets, item, result2h, status, reason) {
   }
 }
 
+// % price has travelled in the trade's favour from the confirmation close
+// (negative = it went against us). Positive means "already moved our way".
+function movedSinceConfirm(direction, confirmPrice, nowPrice) {
+  if (!(confirmPrice > 0) || !(nowPrice > 0)) return 0;
+  return direction === 'bear'
+    ? (confirmPrice - nowPrice) / confirmPrice * 100
+    : (nowPrice - confirmPrice) / confirmPrice * 100;
+}
+
 // True when the confirming 30m candle closed inside the end-of-day window.
 function inEndOfDayWindow(confirmTime) {
   if (!(END_OF_DAY_CUTOFF_HOURS > 0)) return false;
@@ -321,6 +335,21 @@ async function run2HConfirmation() {
         confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice });
         await sleep(80);
         continue;
+      }
+
+      // Chase guard: how far has price already run in our direction since the
+      // confirming candle closed? Only checked the first time a confirmation is
+      // seen (an alerted item has already been decided).
+      if (result2h && !item.alerted && MAX_MOVE_SINCE_CONFIRM_PCT > 0 && allCandles2h && allCandles2h.length) {
+        const nowPrice = allCandles2h[allCandles2h.length - 1].close;
+        const moved = movedSinceConfirm(item.direction, result2h.closePrice, nowPrice);
+        if (moved >= MAX_MOVE_SINCE_CONFIRM_PCT) {
+          skipConfirmation(sets, item, result2h, 'invalidated',
+            `Price had already moved ${moved.toFixed(2)}% in the trade direction since the confirmation candle closed (${fmt(result2h.closePrice)} → ${fmt(nowPrice)}), above the ${MAX_MOVE_SINCE_CONFIRM_PCT}% limit — skipped`);
+          confirmResults.push({ ...item, confirmed: false, signal2h: null, currentPrice: latestPrice });
+          await sleep(80);
+          continue;
+        }
       }
 
       // Exhausted = a big move already happened just before this confirmation.
@@ -627,4 +656,4 @@ async function run2HConfirmation() {
   stateMod.save();
 }
 
-module.exports = { startScan, run2HConfirmation, MAX_RISK_USD, MARGIN_PER_TRADE_USD, MAX_SENSIBLE_LEVERAGE };
+module.exports = { startScan, run2HConfirmation, movedSinceConfirm, MAX_RISK_USD, MARGIN_PER_TRADE_USD, MAX_SENSIBLE_LEVERAGE };
